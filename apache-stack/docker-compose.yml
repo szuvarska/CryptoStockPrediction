@@ -1,0 +1,243 @@
+services:
+  # Zookeeper (wymagany przez Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "29092:29092"
+
+  # HDFS NameNode
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=test
+    volumes:
+      - namenode-data:/hadoop/dfs/name
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+
+  # HDFS DataNode
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    depends_on:
+      - namenode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    ports:
+      - "9864:9864"
+
+  trino:
+    image: trinodb/trino:latest
+    container_name: trino
+    user: root
+    depends_on:
+      - namenode
+      - datanode
+    ports:
+      - "8047:8047"   # Web UI + SQL
+    volumes:
+      - ./trino-config:/etc/trino
+      - ./trino-data:/data/trino
+    environment:
+      - JAVA_OPTIONS=-Xmx1G
+    networks:
+      - default
+
+  spark-master:
+    image: apache/spark:3.4.1
+    container_name: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    ports:
+      - "7077:7077"
+      - "8087:8080"
+    networks:
+      - default
+
+  spark-worker:
+    image: apache/spark:3.4.1
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8081:8081"
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    networks:
+      - default
+
+  spark-jupyter:
+    build: ./spark-notebook
+    container_name: spark-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./notebooks:/opt/notebooks
+      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+    networks:
+      - default
+    depends_on:
+      - spark-master
+
+  spark-worker2:
+    image: apache/spark:3.4.1
+    container_name: spark-worker2
+    depends_on:
+      - spark-master
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8082:8081"
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    networks:
+      - default
+
+  spark-worker3:
+    image: apache/spark:3.4.1
+    container_name: spark-worker3
+    depends_on:
+      - spark-master
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8083:8081"
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    networks:
+      - default
+
+  # HBase
+  hbase:
+    image: harisekhon/hbase:latest
+    container_name: hbase
+    depends_on:
+      - zookeeper
+    environment:
+      - HBASE_MANAGES_ZK=false
+      - HBASE_ZOOKEEPER_QUORUM=zookeeper
+    ports:  
+      - "16010:16010"  # HBase Master Web UI
+      - "16000:16000"  # Master port
+      - "16020:16020"  # RegionServer port
+      - "8085:8080"    # REST API (zmieniłem port, bo 8080 już używa NiFi)
+    volumes:
+      - hbase-data:/data
+  # NiFi
+  nifi:
+    image: apache/nifi:1.23.0
+    container_name: nifi
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+    environment:
+      - NIFI_WEB_HTTP_PORT=8080
+      - NIFI_WEB_HTTPS_PORT=8443
+    volumes:
+      - nifi-data:/opt/nifi/nifi-current/data
+      - nifi-logs:/opt/nifi/nifi-current/logs
+    networks:
+      - default
+      - apache-stack_default
+  # Postgres  
+  postgres:
+    image: postgres:15
+    container_name: hive-postgres
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  hive-metastore:
+    image: hive-with-pg
+    container_name: hive-metastore
+    depends_on:
+      - postgres
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      # Ustawienie opcji połączenia metastore z Postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9083:9083"  # port Hive Metastore Thrift
+    volumes:
+      - ./hive-conf/hive-site.xml:/opt/hive/conf/hive-site.xml
+# Hive-server
+  hive-server2:
+    image: apache/hive:4.0.0
+    container_name: hive-server2
+    depends_on:
+      - hive-metastore
+    environment:
+      SERVICE_NAME: hiveserver2
+      HIVE_METASTORE_URI: thrift://hive-metastore:9083
+      SKIP_SCHEMA_INIT: "true"
+
+      # ustaw logowanie zgodnie z wymaganiami HIVE-19886
+      HADOOP_CLIENT_OPTS: "-Xmx1G -Dhive.root.logger=INFO,console"
+
+    command: >
+      bash -c "
+        export HADOOP_CLIENT_OPTS=\"$HADOOP_CLIENT_OPTS\";
+        /opt/hive/bin/hive --skiphadoopversion --skiphbasecp --service hiveserver2
+      "
+    ports:
+      - "10000:10000"
+    volumes:
+      - ./hive-conf/hive-site.xml:/opt/hive/conf/hive-site.xml
+
+volumes:
+  namenode-data:
+  datanode-data:
+  nifi-data:
+  nifi-logs:
+  hbase-data:
+  hbase-logs:
+  hive-metastore-data:
+  hive-warehouse:
+  postgres-data:
+  trill-data:
+networks:
+  apache-stack_default:
+    external: true

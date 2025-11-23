@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- HiveServer2 -->
+    <property>
+        <name>hive.server2.enable.doAs</name>
+        <value>false</value>
+    </property>
+
+    <!-- Tez (jeśli używasz Tez) -->
+    <property>
+        <name>hive.tez.exec.inplace.progress</name>
+        <value>false</value>
+    </property>
+    <property>
+        <name>tez.runtime.optimize.local.fetch</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>tez.local.mode</name>
+        <value>true</value>
+    </property>
+
+    <!-- Scratch directory -->
+    <property>
+        <name>hive.exec.scratchdir</name>
+        <value>/opt/hive/scratch_dir</value>
+    </property>
+
+    <!-- Local installation directory -->
+    <property>
+        <name>hive.user.install.directory</name>
+        <value>/opt/hive/install_dir</value>
+    </property>
+
+    <!-- MapReduce framework -->
+    <property>
+        <name>mapreduce.framework.name</name>
+        <value>local</value>
+    </property>
+
+    <!-- Silnik wykonawczy -->
+    <property>
+        <name>hive.execution.engine</name>
+        <value>tez</value>
+    </property>
+
+    <!-- Domyślny katalog baz danych Hive w HDFS -->
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>hdfs://namenode:8020/user/hive/warehouse</value>
+        <description>Domyślny katalog baz danych Hive w HDFS</description>
+    </property>
+
+    <!-- Metastore events -->
+    <property>
+        <name>metastore.metastore.event.db.notification.api.auth</name>
+        <value>false</value>
+    </property>
+    <property>
+      <name>hive.metastore.uris</name>
+      <value>thrift://hive-metastore:9083</value>
+    </property>
+</configuration>
