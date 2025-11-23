@@ -50,23 +50,6 @@ services:
     ports:
       - "9864:9864"
 
-  trino:
-    image: trinodb/trino:latest
-    container_name: trino
-    user: root
-    depends_on:
-      - namenode
-      - datanode
-    ports:
-      - "8047:8047"   # Web UI + SQL
-    volumes:
-      - ./trino-config:/etc/trino
-      - ./trino-data:/data/trino
-    environment:
-      - JAVA_OPTIONS=-Xmx1G
-    networks:
-      - default
-
   spark-master:
     image: apache/spark:3.4.1
     container_name: spark-master
