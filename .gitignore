@@ -1,0 +1,14 @@
+*
+!apache-stack/
+!apache-stack/**
+!README.md
+!.gitignore
+!full-template.xml
+!shiny-app/
+!shiny-app/**
+
+
+
+
+
+

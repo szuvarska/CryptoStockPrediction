@@ -124,6 +124,25 @@ services:
     networks:
       - default
 
+# Shiny
+  shiny-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.shiny
+    container_name: shiny-app
+    ports:
+      - "8000:8000"
+    volumes:
+      # Map the shiny-app folder from host to container
+      - ../shiny-app:/opt/shiny-app
+      # Give access to Hive configuration so it can connect to metastore
+      - ./hive-conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+    networks:
+      - default
+    depends_on:
+      - spark-master
+      - hive-metastore
+
   # HBase
   hbase:
     image: harisekhon/hbase:latest

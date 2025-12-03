@@ -1,0 +1,11 @@
+FROM apache/spark:3.4.1
+USER root
+
+# Install Python dependencies for Shiny and Data Science
+RUN pip install --no-cache-dir shiny shinywidgets plotly pandas jinja2 pyspark==3.4.1 anywidget
+
+# Set working directory
+WORKDIR /opt/shiny-app
+
+# Default command (can be overridden in docker-compose)
+CMD ["shiny", "run", "--host", "0.0.0.0", "--port", "8000", "app.py"]
