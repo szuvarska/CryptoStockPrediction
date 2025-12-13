@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, date_sub, current_date
 import socket
+from eda_plots import plot_correlation_matrix, plot_return_distribution, plot_stock_indicators, plot_forex_volume
 
 
 # --- 1. DATA LOADING ---
-def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
-    spark = None
+def get_spark_session(app_name):
     try:
         try:
             socket.gethostbyname("spark-master")
@@ -18,10 +18,9 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
         except:
             master_url = "spark://localhost:7077"
 
-        # Suppress initial noise
         spark = (
             SparkSession.builder
-            .appName(f"ShinyDataLoad-{hive_table_name}")
+            .appName(app_name)
             .master(master_url)
             .config("spark.cores.max", "1")
             .config("spark.executor.cores", "1")
@@ -31,19 +30,26 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
         )
         spark.sparkContext.setLogLevel("ERROR")
         spark.sql("USE CryptoPredictions")
+        return spark
+    except Exception as e:
+        print(f"Error creating Spark session: {e}")
+        return None
 
-        # CHANGED: Added Open/High/Low columns for Candlestick charts
+def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
+    spark = get_spark_session(f"ShinyLoad-{hive_table_name}")
+    if not spark: return pd.DataFrame()
+    try:
         query = f"""
-            SELECT 
-                cast(Datetime as string) as Datetime_Str, 
-                CurrentPrice,
-                OpeningPrice,
-                HighestDayPrice,
-                LowestDayPrice,
-                Symbol 
-            FROM {hive_table_name} 
-            ORDER BY Datetime DESC
-        """
+                    SELECT 
+                        cast(Datetime as string) as Datetime_Str, 
+                        CurrentPrice,
+                        OpeningPrice,
+                        HighestDayPrice,
+                        LowestDayPrice,
+                        Symbol 
+                    FROM {hive_table_name} 
+                    ORDER BY Datetime DESC
+                """
         df_spark = spark.sql(query)
         df_pandas = df_spark.toPandas()
 
@@ -59,16 +65,35 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
             df_pandas = df_pandas.sort_values("Datetime")
 
         return df_pandas
+    finally: pass
 
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return pd.DataFrame()
-    finally:
-        if spark:
-            try:
-                spark.stop()
-            except:
-                pass
+def load_stock_data() -> pd.DataFrame:
+    spark = get_spark_session("LoadStock")
+    if not spark: return pd.DataFrame()
+    try:
+        query = "SELECT cast(Datetime as string) as Datetime_Str, CurrentPrice, FiftyDayAveragePrice, TwoHundredDaysAveragePrice FROM IndexSnapshot WHERE IndexName = 'SNP' ORDER BY Datetime DESC LIMIT 2000"
+        df = spark.sql(query).toPandas()
+        if not df.empty:
+            df['Datetime'] = pd.to_datetime(df['Datetime_Str'])
+            for c in ['CurrentPrice', 'FiftyDayAveragePrice', 'TwoHundredDaysAveragePrice']:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+            df = df.sort_values("Datetime")
+        return df
+    finally: pass
+
+def load_forex_data() -> pd.DataFrame:
+    spark = get_spark_session("LoadForex")
+    if not spark: return pd.DataFrame()
+    try:
+        # Assuming USDExchangeRates has a 'Date' column we cast to string or timestamp
+        query = "SELECT cast(Date as string) as Datetime_Str, VolumeTraded FROM USDExchangeRates LIMIT 1000"
+        df = spark.sql(query).toPandas()
+        if not df.empty:
+            df['Datetime'] = pd.to_datetime(df['Datetime_Str'])
+            df['VolumeTraded'] = pd.to_numeric(df['VolumeTraded'], errors='coerce')
+            df = df.sort_values("Datetime")
+        return df
+    finally: pass
 
 
 # --- 2. HELPER: PLOT TO HTML (The Fix) ---
@@ -125,14 +150,15 @@ app_ui = ui.page_navbar(
 
     # --- TAB 1: DASHBOARD ---
     ui.nav_panel("Dashboard",
-                ui.h3("Dashboard", class_="tab-header"),
+                 ui.h3("Dashboard", class_="tab-header"),
                  ui.layout_sidebar(
                      ui.sidebar(
                          ui.h4("Filters"),
                          ui.input_select("crypto_select", "Asset:",
                                          {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"}, selected="BTC"),
                          ui.input_select("time_range", "Time Range:",
-                                         {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days",
+                                         {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days",
+                                          "30D": "Last 30 Days",
                                           "ALL": "All Available"}, selected="1H"),
                          ui.hr(),
                          ui.output_text("status_text")
@@ -177,6 +203,16 @@ app_ui = ui.page_navbar(
                          ui.card(
                              ui.card_header("Return Distribution"),
                              ui.output_ui("dist_chart_view")
+                         )
+                     ),
+                     ui.row(
+                         ui.card(
+                             ui.card_header("S&P 500 Trends (Golden Cross)"),
+                                 ui.output_ui("stock_chart_view")
+                         ),
+                         ui.card(
+                             ui.card_header("Forex Trading Volume"),
+                                 ui.output_ui("forex_chart_view")
                          )
                      )
                  )
@@ -233,7 +269,7 @@ app_ui = ui.page_navbar(
                      ),
                      ui.card(ui.card_header("Historical Data Table"), ui.output_table("raw_table"))
                  )
-    ),
+                 ),
     title=ui.span(
         ui.HTML(chart_icon_svg),
         " CRYPTO ANALYTICS"
@@ -241,21 +277,24 @@ app_ui = ui.page_navbar(
     id="nav",
     window_title="Crypto Analytics | Live Dashboard",
     footer=ui.div(
-            ui.span("© 2025 Fantastic Four "),
-            ui.span("System Status: Operational", style="color: #00cc96; font-weight: bold;"),
-            class_="app-footer"
-        )
+        ui.span("© 2025 Fantastic Four "),
+        ui.span("System Status: Operational", style="color: #00cc96; font-weight: bold;"),
+        class_="app-footer"
+    )
 )
 
 
 # --- 5. SERVER ---
 def server(input, output, session):
     all_data = reactive.Value(None)
+    stock_data = reactive.Value(None)
+    forex_data = reactive.Value(None)
 
     @reactive.Effect
     def _():
-        df = load_data_from_hive("CryptocurrencySnapshot")
-        all_data.set(df)
+        all_data.set(load_data_from_hive("CryptocurrencySnapshot"))
+        stock_data.set(load_stock_data())
+        forex_data.set(load_forex_data())
 
     # Base Filter Logic
     @reactive.Calc
@@ -306,7 +345,6 @@ def server(input, output, session):
             "LowestDayPrice": "min",
             "CurrentPrice": "last"
         }).dropna().reset_index()
-
 
         df_res = df_res.reset_index()
 
@@ -394,13 +432,15 @@ def server(input, output, session):
             low=df['LowestDayPrice'],
             close=df['CurrentPrice'],
             name=input.crypto_select(),
-            text=[f"Opening Price: {o:,.2f}<br>Highest Day Price: {h:,.2f}<br>Lowest Day Price: {l:,.2f}<br>Current Price: {c:,.2f}"
-                  for o, h, l, c in zip(df['OpeningPrice'], df['HighestDayPrice'], df['LowestDayPrice'], df['CurrentPrice'])],
+            text=[
+                f"Opening Price: {o:,.2f}<br>Highest Day Price: {h:,.2f}<br>Lowest Day Price: {l:,.2f}<br>Current Price: {c:,.2f}"
+                for o, h, l, c in
+                zip(df['OpeningPrice'], df['HighestDayPrice'], df['LowestDayPrice'], df['CurrentPrice'])],
             hoverinfo="x+text"
         )])
 
         fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA7'], mode='lines', name=f'SMA 7',
-                                     line=dict(color='purple', width=1.5)))
+                                 line=dict(color='purple', width=1.5)))
         fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA30'], mode='lines', name=f'SMA 30',
                                  line=dict(color='blue', width=1.5)))
 
@@ -420,51 +460,22 @@ def server(input, output, session):
 
         return render_plotly_html(fig, height="500px")
 
-    # --- PLOT 2: CORRELATION (HTML) ---
+    # --- EDA PLOTS ---
     @render.ui
     def corr_chart_view():
-        df = all_data.get()
-        if df is None or df.empty: return ui.div("No Data")
+        return render_plotly_html(plot_correlation_matrix(all_data.get()))
 
-        pivot_df = df.pivot_table(index='Datetime', columns='Symbol', values='CurrentPrice', aggfunc='mean')
-        returns_df = pivot_df.pct_change().dropna()
-
-        if returns_df.empty: return ui.div("Not enough overlapping data for correlation")
-
-        fig = px.imshow(
-            returns_df.corr(),
-            text_auto=".2f", aspect="auto", color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-            title="Asset Correlation Matrix (Daily Returns)",
-            labels=dict(x="Asset", y="Asset", color="Corr")
-        )
-        # Increased Left Margin for Y-axis Labels as requested
-        fig.update_layout(height=400, margin=dict(l=100, r=20, t=60, b=20))
-        fig.update_yaxes(ticksuffix="  ")
-
-        return render_plotly_html(fig, height="400px")
-
-    # --- PLOT 3: DISTRIBUTION (HTML) ---
     @render.ui
     def dist_chart_view():
-        df = all_data.get()
-        if df is None or df.empty: return ui.div("No Data")
+        return render_plotly_html(plot_return_distribution(all_data.get(), input.crypto_select()))
 
-        asset_df = df[df['Symbol'] == input.eda_asset()].copy()
-        if asset_df.empty: return ui.div("No Data for Asset")
+    @render.ui
+    def stock_chart_view():
+        return render_plotly_html(plot_stock_indicators(stock_data.get()))
 
-        asset_df['Return'] = asset_df['CurrentPrice'].pct_change() * 100
-
-        fig = px.histogram(
-            asset_df, x="Return", nbins=40,
-            title=f"{input.crypto_select()} Return Distribution",
-            template="plotly_white",
-            color_discrete_sequence=["#0d6efd"]
-        )
-        fig.update_layout(
-            height=400, margin=dict(l=60, r=20, t=60, b=20), bargap=0.1,
-            xaxis_title="Return (%)", yaxis_title="Frequency"
-        )
-        return render_plotly_html(fig, height="400px")
+    @render.ui
+    def forex_chart_view():
+        return render_plotly_html(plot_forex_volume(forex_data.get()))
 
     # --- METRICS ---
     @render.ui
@@ -476,7 +487,8 @@ def server(input, output, session):
     @render.ui
     def vbox_change_header():
         # Dynamic Header based on selection
-        label_map = {"1H": "Change (1h)", "24H": "Change (24h)", "7D": "Change (7D)", "30D": "Change (30D)", "ALL": "Change (Total)"}
+        label_map = {"1H": "Change (1h)", "24H": "Change (24h)", "7D": "Change (7D)", "30D": "Change (30D)",
+                     "ALL": "Change (Total)"}
         return ui.div(label_map.get(input.time_range(), "Change"), class_="card-header")
 
     @render.ui

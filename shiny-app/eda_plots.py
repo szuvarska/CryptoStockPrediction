@@ -71,6 +71,43 @@ def plot_return_distribution(df, symbol):
     return fig
 
 
+def plot_stock_indicators(df_stock):
+    if df_stock is None or df_stock.empty: return _empty_plot("No Stock Data")
+
+    fig = go.Figure()
+    # Price Line
+    fig.add_trace(go.Scatter(x=df_stock['Datetime'], y=df_stock['CurrentPrice'], mode='lines', name='S&P 500',
+                             line=dict(color='black', width=2)))
+    # Moving Averages
+    fig.add_trace(go.Scatter(x=df_stock['Datetime'], y=df_stock['FiftyDayAveragePrice'], mode='lines', name='50-Day MA',
+                             line=dict(color='green', width=1.5)))
+    fig.add_trace(
+        go.Scatter(x=df_stock['Datetime'], y=df_stock['TwoHundredDaysAveragePrice'], mode='lines', name='200-Day MA',
+                   line=dict(color='red', width=1.5)))
+
+    fig.update_layout(
+        title="S&P 500 Market Trends (Golden Cross Check)",
+        template="plotly_white",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
+def plot_forex_volume(df_forex):
+    if df_forex is None or df_forex.empty: return _empty_plot("No Forex Data")
+
+    # Resample to daily if needed, or plot raw stream
+    # Assuming daily aggregation for volume makes sense
+    df_daily = df_forex.set_index('Datetime').resample('1D').sum().reset_index()
+
+    fig = px.bar(df_daily, x='Datetime', y='VolumeTraded', title="Forex Daily Volume", template="plotly_white")
+    fig.update_traces(marker_color='#636efa')
+    fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
+    return fig
+
+
 def _empty_plot(text):
     fig = go.Figure()
     fig.add_annotation(text=text, showarrow=False, font={"size": 20})
