@@ -71,7 +71,7 @@ def load_stock_data() -> pd.DataFrame:
     spark = get_spark_session("LoadStock")
     if not spark: return pd.DataFrame()
     try:
-        query = "SELECT cast(Datetime as string) as Datetime_Str, CurrentPrice, FiftyDayAveragePrice, TwoHundredDaysAveragePrice FROM IndexSnapshot WHERE IndexName = 'SNP' ORDER BY Datetime DESC LIMIT 2000"
+        query = "SELECT cast(Datetime as string) as Datetime_Str, CurrentPrice, FiftyDayAveragePrice, TwoHundredDaysAveragePrice FROM IndexSnapshot WHERE IndexName = 'SNP' ORDER BY Datetime DESC"
         df = spark.sql(query).toPandas()
         if not df.empty:
             df['Datetime'] = pd.to_datetime(df['Datetime_Str'])
@@ -86,7 +86,7 @@ def load_forex_data() -> pd.DataFrame:
     if not spark: return pd.DataFrame()
     try:
         # Assuming USDExchangeRates has a 'Date' column we cast to string or timestamp
-        query = "SELECT cast(Date as string) as Datetime_Str, VolumeTraded FROM USDExchangeRates LIMIT 1000"
+        query = "SELECT cast(Date as string) as Datetime_Str, VolumeTraded FROM USDExchangeRates"
         df = spark.sql(query).toPandas()
         if not df.empty:
             df['Datetime'] = pd.to_datetime(df['Datetime_Str'])

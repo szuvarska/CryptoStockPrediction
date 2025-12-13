@@ -38,6 +38,8 @@ def plot_correlation_matrix(df):
         xaxis_title="Asset",
         yaxis_title="Asset"
     )
+    fig.update_yaxes(ticksuffix="  ")
+
     return fig
 
 
@@ -68,6 +70,7 @@ def plot_return_distribution(df, symbol):
         margin=dict(l=60, r=20, t=60, b=20),
         bargap=0.1
     )
+
     return fig
 
 
@@ -92,6 +95,9 @@ def plot_stock_indicators(df_stock):
         margin=dict(l=20, r=20, t=40, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+
+    fig.update_yaxes(ticksuffix="  ")
+
     return fig
 
 
