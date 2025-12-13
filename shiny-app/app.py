@@ -32,13 +32,18 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
         spark.sparkContext.setLogLevel("ERROR")
         spark.sql("USE CryptoPredictions")
 
+        # CHANGED: Added Open/High/Low columns for Candlestick charts
         query = f"""
             SELECT 
                 cast(Datetime as string) as Datetime_Str, 
-                CurrentPrice, 
+                CurrentPrice,
+                OpeningPrice,
+                HighestDayPrice,
+                LowestDayPrice,
                 Symbol 
             FROM {hive_table_name} 
             ORDER BY Datetime DESC
+            LIMIT 5000
         """
         df_spark = spark.sql(query)
         df_pandas = df_spark.toPandas()
@@ -46,7 +51,12 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
         if not df_pandas.empty:
             df_pandas['Datetime'] = pd.to_datetime(df_pandas['Datetime_Str'])
             df_pandas['Symbol'] = df_pandas['Symbol'].astype(str).str.upper().str.strip()
-            df_pandas['CurrentPrice'] = pd.to_numeric(df_pandas['CurrentPrice'], errors='coerce')
+
+            # Ensure numeric types for all price columns
+            cols = ['CurrentPrice', 'OpeningPrice', 'HighestDayPrice', 'LowestDayPrice']
+            for c in cols:
+                df_pandas[c] = pd.to_numeric(df_pandas[c], errors='coerce')
+
             df_pandas = df_pandas.sort_values("Datetime")
 
         return df_pandas
@@ -55,7 +65,6 @@ def load_data_from_hive(hive_table_name: str) -> pd.DataFrame:
         print(f"ERROR: {e}")
         return pd.DataFrame()
     finally:
-        # Silent shutdown to avoid traceback noise
         if spark:
             try:
                 spark.stop()
@@ -82,6 +91,7 @@ custom_css = """
     .table th { background-color: #f8f9fa; }
     /* Padding for EDA Header */
     .tab-header { margin-top: 30px; margin-bottom: 20px; padding-left: 15px; border-left: 5px solid #0d6efd; background-color: #f8f9fa; padding-top: 10px; padding-bottom: 10px; }
+    .vbox-ui .card-body { padding: 0; }
 """
 
 # --- 4. UI ---
@@ -92,34 +102,36 @@ app_ui = ui.page_fluid(
     ui.navset_tab(
         # --- TAB 1: DASHBOARD ---
         ui.nav_panel("Dashboard",
-                     ui.h3("Stock Market Overview", class_="tab-header"),
                      ui.layout_sidebar(
+                         # Sidebar as positional arg
                          ui.sidebar(
                              ui.h4("Filters"),
                              ui.input_select("crypto_select", "Asset:",
                                              {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"}, selected="BTC"),
                              ui.input_select("time_range", "Time Range:",
-                                             {"24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days",
-                                              "ALL": "All Available"}, selected="7D"),
+                                             {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days",
+                                              "ALL": "All Available"}, selected="1H"),
                              ui.hr(),
                              ui.output_text("status_text")
                          ),
                          ui.row(
-                             ui.column(4, ui.card(ui.card_header("Current Price (USD)"),
-                                                  ui.output_text("val_price", inline=True),
+                             ui.column(4, ui.card(ui.card_header("Current Price"), ui.output_ui("vbox_price"),
                                                   style="text-align: center; min-height: 120px;")),
-                             ui.column(4,
-                                       ui.card(ui.card_header("Change (%)"), ui.output_text("val_change", inline=True),
-                                               style="text-align: center; min-height: 120px;")),
-                             ui.column(4, ui.card(ui.card_header("Volatility (StdDev)"),
-                                                  ui.output_text("val_vol", inline=True),
+                             ui.column(4, ui.card(ui.output_ui("vbox_change_header"), ui.output_ui("vbox_change"),
+                                                  style="text-align: center; min-height: 120px;"), class_="vbox-ui"),
+                             ui.column(4, ui.card(ui.card_header("Volatility"), ui.output_ui("vbox_vol"),
                                                   style="text-align: center; min-height: 120px;")),
                          ),
                          ui.br(),
                          ui.card(
-                             ui.card_header("Price Trend Analysis"),
-                             # CHANGED: output_ui instead of output_widget
+                             ui.card_header("Overview: Price Trend"),
                              ui.output_ui("price_chart_view"),
+                             full_screen=True
+                         ),
+                         ui.br(),
+                         ui.card(
+                             ui.card_header("Deep Dive: Price Action & Indicators"),
+                             ui.output_ui("candle_chart_view"),
                              full_screen=True
                          )
                      )
@@ -174,42 +186,123 @@ def server(input, output, session):
         df = load_data_from_hive("CryptocurrencySnapshot")
         all_data.set(df)
 
+    # Base Filter Logic
     @reactive.Calc
-    def dashboard_data():
+    def dashboard_data_raw():
         df = all_data.get()
         if df is not None and not df.empty:
-            df_sub = df[df['Symbol'] == input.crypto_select()]
+            df_sub = df[df['Symbol'] == input.crypto_select()].copy()
 
-            # Simplified Date Filter
+            # Date Filter
             if input.time_range() == "24H":
                 cutoff = df_sub['Datetime'].max() - pd.Timedelta(hours=24)
-                return df_sub[df_sub['Datetime'] >= cutoff].sort_values("Datetime")
+                df_sub = df_sub[df_sub['Datetime'] >= cutoff]
             elif input.time_range() == "7D":
                 cutoff = df_sub['Datetime'].max() - pd.Timedelta(days=7)
-                return df_sub[df_sub['Datetime'] >= cutoff].sort_values("Datetime")
+                df_sub = df_sub[df_sub['Datetime'] >= cutoff]
             elif input.time_range() == "30D":
                 cutoff = df_sub['Datetime'].max() - pd.Timedelta(days=30)
-                return df_sub[df_sub['Datetime'] >= cutoff].sort_values("Datetime")
+                df_sub = df_sub[df_sub['Datetime'] >= cutoff]
+            elif input.time_range() == "1H":
+                cutoff = df_sub['Datetime'].max() - pd.Timedelta(hours=1)
+                df_sub = df_sub[df_sub['Datetime'] >= cutoff]
 
             return df_sub.sort_values("Datetime")
         return pd.DataFrame()
 
-    # --- PLOT 1: PRICE TREND (HTML) ---
+    # Resampled Logic for Candlesticks
+    @reactive.Calc
+    def dashboard_data_resampled():
+        df = dashboard_data_raw()
+        if df.empty: return df
+
+        # Dynamic Resampling Frequency
+        if input.time_range() == "1H":
+            freq = "1min"
+        elif input.time_range() == "24H":
+            freq = "15min"
+        elif input.time_range() == "30D":
+            freq = "4H"
+        elif input.time_range() == "7D":
+            freq = "1H"
+        else:
+            freq = "4H"
+
+        # Resample to create legitimate OHLC bars from the price stream
+        df_res = df.set_index("Datetime").resample(freq).agg({
+            "OpeningPrice": "first",
+            "HighestDayPrice": "max",
+            "LowestDayPrice": "min",
+            "CurrentPrice": "last"
+        }).dropna().reset_index()
+
+
+        df_res = df_res.reset_index()
+
+        # Calculate SMA on resampled data
+        df_res['SMA7'] = df_res['CurrentPrice'].rolling(window=7, min_periods=1).mean()
+        df_res['SMA30'] = df_res['CurrentPrice'].rolling(window=30, min_periods=1).mean()
+
+        return df_res
+
+    # --- PLOT 1: SIMPLE LINE ---
     @render.ui
     def price_chart_view():
-        df = dashboard_data()
+        df = dashboard_data_raw()
         if df.empty: return ui.div("No Data Available", style="color:gray; text-align:center; padding:50px;")
+
+        # Determine Trend Color
+        start_price = df['CurrentPrice'].iloc[0]
+        end_price = df['CurrentPrice'].iloc[-1]
+        trend_color = "#00cc96" if end_price >= start_price else "#ef553b"
 
         fig = px.line(df, x="Datetime", y="CurrentPrice", template="plotly_white")
         fig.update_layout(
-            title=dict(text=f"{input.crypto_select()} Trend", x=0.01),
-            xaxis_title="Date", yaxis_title="Price ($)",
-            margin=dict(l=60, r=20, t=40, b=20),
+            title=None, xaxis_title=None, yaxis_title="Price ($)",
+            margin=dict(l=60, r=20, t=20, b=20),
             hovermode="x unified",
-            height=500
+            height=400
         )
         fig.update_xaxes(tickformat="%b %d %H:%M")
         fig.update_yaxes(tickprefix="$")
+        fig.update_traces(line=dict(width=2, color=trend_color))
+        return render_plotly_html(fig, height="400px")
+
+    # --- PLOT 2: CANDLESTICK ---
+    @render.ui
+    def candle_chart_view():
+        df = dashboard_data_resampled()
+        if df.empty: return ui.div("No Data Available", style="color:gray; text-align:center; padding:50px;")
+
+        # Base: Candlestick
+        fig = go.Figure(data=[go.Candlestick(
+            x=df['Datetime'],
+            open=df['OpeningPrice'],
+            high=df['HighestDayPrice'],
+            low=df['LowestDayPrice'],
+            close=df['CurrentPrice'],
+            name=input.crypto_select()
+        )])
+
+        fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA7'], mode='lines', name=f'SMA 7',
+                                     line=dict(color='purple', width=1.5)))
+        fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA30'], mode='lines', name=f'SMA 30',
+                                 line=dict(color='blue', width=1.5)))
+
+        # Layout
+        fig.update_layout(
+            title=dict(text=f"{input.crypto_select()} Price Action", x=0.01),
+            yaxis_title="Price (USD)",
+            margin=dict(l=60, r=20, t=40, b=40),  # Increased bottom margin for rangeslider
+            hovermode="x unified",
+            height=500,
+            xaxis_rangeslider_visible=False,  # Hide the mini-slider to save space
+            xaxis=dict(type='date'),
+            template="plotly_white"
+        )
+        fig.update_xaxes(tickformat="%b %d %H:%M")
+        fig.update_yaxes(tickprefix="$")
+
         return render_plotly_html(fig, height="500px")
 
     # --- PLOT 2: CORRELATION (HTML) ---
@@ -259,22 +352,41 @@ def server(input, output, session):
         return render_plotly_html(fig, height="400px")
 
     # --- METRICS ---
-    @render.text
-    def val_price():
-        df = dashboard_data()
-        return f"${df['CurrentPrice'].iloc[-1]:,.2f}" if not df.empty else "$ -"
+    @render.ui
+    def vbox_price():
+        df = dashboard_data_raw()
+        val = f"${df['CurrentPrice'].iloc[-1]:,.2f}" if not df.empty else "$ -"
+        return ui.div(val, class_="metric-value")
 
-    @render.text
-    def val_change():
-        df = dashboard_data()
-        if df.empty: return "-"
-        chg = ((df['CurrentPrice'].iloc[-1] - df['CurrentPrice'].iloc[0]) / df['CurrentPrice'].iloc[0]) * 100
-        return f"{chg:+.2f}%"
+    @render.ui
+    def vbox_change_header():
+        # Dynamic Header based on selection
+        label_map = {"24H": "Change (24h)", "7D": "Change (7D)", "30D": "Change (30D)", "ALL": "Change (Total)"}
+        return ui.div(label_map.get(input.time_range(), "Change"), class_="card-header")
 
-    @render.text
-    def val_vol():
-        df = dashboard_data()
-        return f"${df['CurrentPrice'].std():.2f}" if not df.empty else "-"
+    @render.ui
+    def vbox_change():
+        df = dashboard_data_raw()
+        if df.empty: return ui.div("-", class_="metric-value")
+
+        start = df['CurrentPrice'].iloc[0]
+        end = df['CurrentPrice'].iloc[-1]
+        chg = ((end - start) / start) * 100
+
+        color = "#00cc96" if chg >= 0 else "#ef553b"
+        symbol = "▲" if chg >= 0 else "▼"
+
+        return ui.div(
+            f"{symbol} {abs(chg):.2f}%",
+            class_="metric-value",
+            style=f"color: {color};"
+        )
+
+    @render.ui
+    def vbox_vol():
+        df = dashboard_data_raw()
+        val = f"${df['CurrentPrice'].std():.2f}" if not df.empty else "-"
+        return ui.div(val, class_="metric-value")
 
     @render.text
     def status_text():
