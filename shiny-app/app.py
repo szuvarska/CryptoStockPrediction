@@ -99,6 +99,9 @@ custom_css = """
     .table th, .table td { text-align: center; vertical-align: middle; }
     .table th { background-color: #f8f9fa; }
     
+    .metric-value { font-size: 2rem; font-weight: bold; }
+    .metric-label { color: #6c757d; font-size: 0.9rem; text-transform: uppercase; }
+    
     .app-footer {
         position: fixed; bottom: 0; left: 0; width: 100%;
         background-color: #1a1d29; color: #8a8d99;
@@ -179,7 +182,27 @@ app_ui = ui.page_navbar(
                  )
                  ),
 
-    # --- TAB 3: RAW DATA ---
+    # --- TAB 3: MODEL EVALUATION ---
+    ui.nav_panel("Model Eval",
+                 ui.h3("Model Scorecard", class_="tab-header"),
+                 ui.row(
+                     ui.column(3, ui.card(ui.div("RMSE", class_="metric-label"), ui.output_ui("eval_rmse"),
+                                          style="text-align: center;")),
+                     ui.column(3, ui.card(ui.div("MAPE", class_="metric-label"), ui.output_ui("eval_mape"),
+                                          style="text-align: center;")),
+                     ui.column(3, ui.card(ui.div("Directional Acc", class_="metric-label"), ui.output_ui("eval_dir"),
+                                          style="text-align: center;")),
+                     ui.column(3, ui.card(ui.div("R-Squared", class_="metric-label"), ui.output_ui("eval_r2"),
+                                          style="text-align: center;")),
+                 ),
+                 ui.br(),
+                 ui.row(
+                     ui.column(6, ui.card(ui.card_header("Actual vs. Predicted"), ui.output_ui("eval_pred_chart"))),
+                     ui.column(6, ui.card(ui.card_header("Residuals over Time"), ui.output_ui("eval_resid_chart")))
+                 )
+                 ),
+
+    # --- TAB 4: RAW DATA ---
     ui.nav_panel("Raw Data",
                  ui.h3("Raw Data", class_="tab-header"),
                  ui.layout_sidebar(
@@ -274,6 +297,23 @@ def server(input, output, session):
         df_res['SMA30'] = df_res['CurrentPrice'].rolling(window=30, min_periods=1).mean()
 
         return df_res
+
+    # --- MOCK DATA FOR EVALUATION ---
+    @reactive.Calc
+    def mock_eval_data():
+        df = dashboard_data_raw()
+        if df.empty: return pd.DataFrame()
+
+        # Create fake predictions (Actual + Noise)
+        eval_df = df[['Datetime', 'CurrentPrice']].copy()
+        eval_df.rename(columns={'CurrentPrice': 'Actual'}, inplace=True)
+
+        # Add noise +/- 2%
+        noise = np.random.normal(0, eval_df['Actual'] * 0.02, len(eval_df))
+        eval_df['Predicted'] = eval_df['Actual'] + noise
+        eval_df['Residual'] = eval_df['Actual'] - eval_df['Predicted']
+
+        return eval_df
 
     # --- PLOT 1: SIMPLE LINE ---
     @render.ui
@@ -449,6 +489,58 @@ def server(input, output, session):
     def status_text():
         df = all_data.get()
         return f"🟢 Loaded {len(df)} rows" if df is not None and not df.empty else "Connecting..."
+
+    @render.ui
+    def eval_rmse():
+        df = mock_eval_data()
+        if df.empty: return "-"
+        rmse = np.sqrt(((df['Actual'] - df['Predicted']) ** 2).mean())
+        return ui.div(f"${rmse:,.2f}", class_="metric-value", style="color:#ef553b")
+
+    @render.ui
+    def eval_mape():
+        df = mock_eval_data()
+        if df.empty: return "-"
+        mape = (abs((df['Actual'] - df['Predicted']) / df['Actual']).mean()) * 100
+        return ui.div(f"{mape:.2f}%", class_="metric-value", style="color:#ffa500")
+
+    @render.ui
+    def eval_dir():
+        # Directional Accuracy (Did we predict the sign of change correctly?)
+        df = mock_eval_data()
+        if df.empty: return "-"
+        # Simple mockup: 65% accuracy
+        return ui.div("65.2%", class_="metric-value", style="color:#00cc96")
+
+    @render.ui
+    def eval_r2():
+        return ui.div("0.89", class_="metric-value")
+
+    @render.ui
+    def eval_pred_chart():
+        df = mock_eval_data()
+        if df.empty: return ui.div("No Data")
+
+        # Plot Actual vs Predicted (Time Series)
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(x=df['Datetime'], y=df['Actual'], mode='lines', name='Actual', line=dict(color='#00cc96')))
+        fig.add_trace(go.Scatter(x=df['Datetime'], y=df['Predicted'], mode='lines', name='Predicted',
+                                 line=dict(color='#ef553b', dash='dot')))
+
+        fig.update_layout(title="Actual vs Predicted Prices", margin=dict(l=40, r=20, t=40, b=20),
+                          hovermode="x unified", template="plotly_white", height=400)
+        return render_plotly_html(fig, height="400px")
+
+    @render.ui
+    def eval_resid_chart():
+        df = mock_eval_data()
+        if df.empty: return ui.div("No Data")
+
+        fig = px.scatter(df, x="Datetime", y="Residual", title="Residual Errors over Time", template="plotly_white")
+        fig.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig.update_layout(margin=dict(l=40, r=20, t=40, b=20), height=400)
+        return render_plotly_html(fig, height="400px")
 
     # --- TABLES ---
     @render.table
