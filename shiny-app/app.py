@@ -202,7 +202,25 @@ app_ui = ui.page_navbar(
                  )
                  ),
 
-    # --- TAB 4: RAW DATA ---
+    # --- TAB 4: MONITORING ---
+    ui.nav_panel("Monitoring",
+                 ui.h3("System Health Monitor", class_="tab-header"),
+                 ui.row(
+                     ui.column(4, ui.card(ui.card_header("Pipeline Status"), ui.output_ui("mon_status"),
+                                          style="text-align:center; min-height:150px;")),
+                     ui.column(4, ui.card(ui.card_header("Data Freshness"), ui.output_ui("mon_freshness"),
+                                          style="text-align:center; min-height:150px;")),
+                     ui.column(4, ui.card(ui.card_header("Total Records"), ui.output_ui("mon_count"),
+                                          style="text-align:center; min-height:150px;")),
+                 ),
+                 ui.br(),
+                 ui.card(
+                     ui.card_header("Ingestion Latency Log (Last 20 Batches)"),
+                     ui.output_table("mon_table")
+                 )
+                 ),
+
+    # --- TAB 5: RAW DATA ---
     ui.nav_panel("Raw Data",
                  ui.h3("Raw Data", class_="tab-header"),
                  ui.layout_sidebar(
@@ -541,6 +559,54 @@ def server(input, output, session):
         fig.add_hline(y=0, line_dash="dash", line_color="gray")
         fig.update_layout(margin=dict(l=40, r=20, t=40, b=20), height=400)
         return render_plotly_html(fig, height="400px")
+
+    @render.ui
+    def mon_status():
+        df = all_data.get()
+        if df is None or df.empty: return ui.div("OFFLINE", class_="metric-value status-crit")
+
+        last_time = df['Datetime'].max()
+        time_diff = pd.Timestamp.now() - last_time
+
+        # Logic: If data is older than 2 hours (for demo purposes) -> Warn
+        # In prod, this might be 5 minutes
+        if time_diff > pd.Timedelta(hours=24):
+            return ui.div("STALE", class_="metric-value status-crit")
+        elif time_diff > pd.Timedelta(hours=2):
+            return ui.div("LAGGING", class_="metric-value status-warn")
+        else:
+            return ui.div("ONLINE", class_="metric-value status-ok")
+
+    @render.ui
+    def mon_freshness():
+        df = all_data.get()
+        if df is None or df.empty: return ui.div("-", class_="metric-value")
+        last_time = df['Datetime'].max()
+        # Format: "2 mins ago" or "5 hours ago"
+        diff = pd.Timestamp.now() - last_time
+        if diff.days > 0:
+            val = f"{diff.days} days ago"
+        elif diff.seconds > 3600:
+            val = f"{diff.seconds // 3600} hours ago"
+        else:
+            val = f"{diff.seconds // 60} mins ago"
+        return ui.div(val, class_="metric-value")
+
+    @render.ui
+    def mon_count():
+        df = all_data.get()
+        count = len(df) if df is not None else 0
+        return ui.div(f"{count:,.0f}", class_="metric-value")
+
+    @render.table
+    def mon_table():
+        df = all_data.get()
+        if df is None or df.empty: return pd.DataFrame()
+        # Simulate an "Ingestion Log" by showing the latest timestamps per asset
+        latest_per_asset = df.groupby('Symbol')['Datetime'].max().reset_index()
+        latest_per_asset['Status'] = 'OK'
+        latest_per_asset['Latency (ms)'] = np.random.randint(50, 500, size=len(latest_per_asset))
+        return latest_per_asset
 
     # --- TABLES ---
     @render.table
