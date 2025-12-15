@@ -1,0 +1,65 @@
+nohup: ignoring input
+25/12/14 22:28:19 INFO SparkContext: Running Spark version 3.4.1
+25/12/14 22:28:19 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+25/12/14 22:28:19 INFO ResourceUtils: ==============================================================
+25/12/14 22:28:19 INFO ResourceUtils: No custom resources configured for spark.driver.
+25/12/14 22:28:19 INFO ResourceUtils: ==============================================================
+25/12/14 22:28:19 INFO SparkContext: Submitted application: CryptoStockToHBase
+25/12/14 22:28:19 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(memory -> name: memory, amount: 1024, script: , vendor: , offHeap -> name: offHeap, amount: 0, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+25/12/14 22:28:20 INFO ResourceProfile: Limiting resource is cpu
+25/12/14 22:28:20 INFO ResourceProfileManager: Added ResourceProfile id: 0
+25/12/14 22:28:20 INFO SecurityManager: Changing view acls to: root
+25/12/14 22:28:20 INFO SecurityManager: Changing modify acls to: root
+25/12/14 22:28:20 INFO SecurityManager: Changing view acls groups to: 
+25/12/14 22:28:20 INFO SecurityManager: Changing modify acls groups to: 
+25/12/14 22:28:20 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: root; groups with view permissions: EMPTY; users with modify permissions: root; groups with modify permissions: EMPTY
+25/12/14 22:28:20 INFO Utils: Successfully started service 'sparkDriver' on port 36871.
+25/12/14 22:28:20 INFO SparkEnv: Registering MapOutputTracker
+25/12/14 22:28:20 INFO SparkEnv: Registering BlockManagerMaster
+25/12/14 22:28:20 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+25/12/14 22:28:20 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+25/12/14 22:28:20 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+25/12/14 22:28:20 INFO DiskBlockManager: Created local directory at /tmp/blockmgr-8193b20d-1dc4-4407-b180-3dcda4d04fea
+25/12/14 22:28:20 INFO MemoryStore: MemoryStore started with capacity 434.4 MiB
+25/12/14 22:28:20 INFO SparkEnv: Registering OutputCommitCoordinator
+25/12/14 22:28:20 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+25/12/14 22:28:20 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+25/12/14 22:28:20 INFO Utils: Successfully started service 'SparkUI' on port 4041.
+25/12/14 22:28:20 INFO StandaloneAppClient$ClientEndpoint: Connecting to master spark://spark-master:7077...
+25/12/14 22:28:21 INFO TransportClientFactory: Successfully created connection to spark-master/172.18.0.2:7077 after 30 ms (0 ms spent in bootstraps)
+25/12/14 22:28:21 INFO StandaloneSchedulerBackend: Connected to Spark cluster with app ID app-20251214222821-0097
+25/12/14 22:28:21 INFO StandaloneAppClient$ClientEndpoint: Executor added: app-20251214222821-0097/0 on worker-20251123204028-172.18.0.8-41609 (172.18.0.8:41609) with 1 core(s)
+25/12/14 22:28:21 INFO StandaloneSchedulerBackend: Granted executor ID app-20251214222821-0097/0 on hostPort 172.18.0.8:41609 with 1 core(s), 1024.0 MiB RAM
+25/12/14 22:28:21 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 39203.
+25/12/14 22:28:21 INFO NettyBlockTransferService: Server created on 964e98f269d2:39203
+25/12/14 22:28:21 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+25/12/14 22:28:21 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, 964e98f269d2, 39203, None)
+25/12/14 22:28:21 INFO BlockManagerMasterEndpoint: Registering block manager 964e98f269d2:39203 with 434.4 MiB RAM, BlockManagerId(driver, 964e98f269d2, 39203, None)
+25/12/14 22:28:21 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, 964e98f269d2, 39203, None)
+25/12/14 22:28:21 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, 964e98f269d2, 39203, None)
+25/12/14 22:28:21 INFO StandaloneAppClient$ClientEndpoint: Executor updated: app-20251214222821-0097/0 is now RUNNING
+25/12/14 22:28:21 INFO StandaloneSchedulerBackend: SchedulerBackend is ready for scheduling beginning after reached minRegisteredResourcesRatio: 0.0
+25/12/14 22:28:21 INFO SharedState: spark.sql.warehouse.dir is not set, but hive.metastore.warehouse.dir is set. Setting spark.sql.warehouse.dir to the value of hive.metastore.warehouse.dir.
+25/12/14 22:28:22 INFO SharedState: Warehouse path is 'hdfs://namenode:8020/user/hive/warehouse'.
+Traceback (most recent call last):
+  File "/opt/notebooks/crypto_stock_to_hbase.py", line 34, in <module>
+    df = spark.readStream \
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/sql/streaming/readwriter.py", line 277, in load
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1322, in __call__
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py", line 175, in deco
+pyspark.errors.exceptions.captured.AnalysisException: Failed to find data source: kafka. Please deploy the application as per the deployment section of Structured Streaming + Kafka Integration Guide.
+25/12/14 22:28:24 INFO SparkContext: Invoking stop() from shutdown hook
+25/12/14 22:28:24 INFO SparkContext: SparkContext is stopping with exitCode 0.
+25/12/14 22:28:24 INFO SparkUI: Stopped Spark web UI at http://964e98f269d2:4041
+25/12/14 22:28:24 INFO StandaloneSchedulerBackend: Shutting down all executors
+25/12/14 22:28:24 INFO StandaloneSchedulerBackend$StandaloneDriverEndpoint: Asking each executor to shut down
+25/12/14 22:28:24 INFO MapOutputTrackerMasterEndpoint: MapOutputTrackerMasterEndpoint stopped!
+25/12/14 22:28:24 INFO MemoryStore: MemoryStore cleared
+25/12/14 22:28:24 INFO BlockManager: BlockManager stopped
+25/12/14 22:28:24 INFO BlockManagerMaster: BlockManagerMaster stopped
+25/12/14 22:28:24 INFO OutputCommitCoordinator$OutputCommitCoordinatorEndpoint: OutputCommitCoordinator stopped!
+25/12/14 22:28:24 INFO SparkContext: Successfully stopped SparkContext
+25/12/14 22:28:24 INFO ShutdownHookManager: Shutdown hook called
+25/12/14 22:28:24 INFO ShutdownHookManager: Deleting directory /tmp/spark-ee3faf66-f3d1-4f2d-9944-7a50d8f3150a/pyspark-8bd2afd7-b56e-4d9b-bf4d-66ecf27d894d
+25/12/14 22:28:24 INFO ShutdownHookManager: Deleting directory /tmp/spark-8b543f06-88b6-4e7c-a42b-f189bfe6df64
+25/12/14 22:28:24 INFO ShutdownHookManager: Deleting directory /tmp/spark-ee3faf66-f3d1-4f2d-9944-7a50d8f3150a

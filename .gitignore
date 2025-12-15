@@ -6,7 +6,7 @@
 !full-template.xml
 !shiny-app/
 !shiny-app/**
-
+shiny-app/crypto_ml_env
 
 
 
