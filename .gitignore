@@ -8,7 +8,11 @@
 !shiny-app/**
 shiny-app/crypto_ml_env
 
-
+# ---- Python / Jupyter noise ----
+**/__pycache__/
+**/*.pyc
+**/.ipynb_checkpoints/
+**/*.log
 
 
 
