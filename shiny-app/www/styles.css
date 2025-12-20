@@ -23,7 +23,7 @@ body {
 }
 
 /* --- TABLES --- */
-.table th, .table td {
+.table th, .table td, .table tr {
     text-align: left !important;
     vertical-align: middle;
 }

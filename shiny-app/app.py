@@ -1,9 +1,8 @@
 import pandas as pd
 import numpy as np
 from shiny import App, ui, reactive, render
-import plotly.express as px
-import plotly.graph_objects as go
 from faicons import icon_svg
+from pathlib import Path
 
 # --- Local Imports (Refactored Modules) ---
 from data_loader import load_crypto_data, load_stock_data, load_forex_data, load_spark_model
@@ -24,69 +23,70 @@ def render_plotly_html(fig, height="100%"):
     return ui.HTML(f'<div style="height: {height}; width: 100%;">{html}</div>')
 
 # --- 4. UI ---
-app_ui = ui.page_navbar(
+app_ui = ui.page_sidebar(
+# --- GLOBAL SIDEBAR ---
+    ui.sidebar(
+        ui.h4("Filters", style="margin-top:10px;"),
+        ui.input_select(
+            "crypto_select", "Asset:",
+            {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
+            selected="BTC"
+        ),
+        ui.input_select(
+            "time_range", "Time Range:",
+            {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days", "ALL": "All Available"},
+            selected="24H"
+        ),
+        ui.hr(),
+        ui.h6("System Health"),
+        ui.output_ui("sidebar_status"),
+        width=275,
+        open="desktop"
+    ),
+
     ui.head_content(
         ui.tags.link(rel="stylesheet", href="styles.css"),
         ui.tags.link(rel="icon", href="https://cdn-icons-png.flaticon.com/512/1822/1822219.png")
     ),
 
+ui.navset_card_tab(
+
     # --- TAB 1: DASHBOARD ---
     ui.nav_panel("Dashboard",
                  ui.h3("Live Market Overview", class_="tab-header"),
-                 ui.layout_sidebar(
-                     ui.sidebar(
-                         ui.h4("Filters"),
-                         ui.input_select("crypto_select", "Asset:",
-                                         {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"}, selected="BTC"),
-                         ui.input_select("time_range", "Time Range:",
-                                         {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days",
-                                          "30D": "Last 30 Days",
-                                          "ALL": "All Available"}, selected="1H"),
-                         ui.hr(),
-                         ui.h6("System Health"),
-                         ui.output_ui("sidebar_status"),
-                         width=275,
+                 # Value Boxes (Metrics)
+                 ui.layout_columns(
+                     ui.value_box(
+                         "Current Price", ui.output_ui("vbox_price"),
+                         showcase=icon_svg("bitcoin"), theme="bg-gradient-blue-purple"
                      ),
-                     # Value Boxes (Metrics)
-                     ui.layout_columns(
-                         ui.value_box(
-                             "Current Price", ui.output_ui("vbox_price"),
-                             showcase=icon_svg("bitcoin"), theme="bg-gradient-blue-purple"
-                         ),
-                         ui.value_box(
-                             "Change", ui.output_ui("vbox_change"),
-                             showcase=icon_svg("chart-line"), theme="white"
-                         ),
-                         ui.value_box(
-                             "Volatility (StdDev)", ui.output_ui("vbox_vol"),
-                             showcase=icon_svg("wave-square"), theme="bg-gradient-blue-purple"
-                         ),
-                         fill=False
+                     ui.value_box(
+                         ui.output_ui("vbox_change_label"), ui.output_ui("vbox_change"),
+                         showcase=icon_svg("chart-line"), theme="white"
                      ),
-                     ui.br(),
-                     ui.card(
-                         ui.card_header("Price Trend Analysis"),
-                         ui.output_ui("price_chart_view"),
-                         full_screen=True
+                     ui.value_box(
+                         "Volatility (StdDev)", ui.output_ui("vbox_vol"),
+                         showcase=icon_svg("wave-square"), theme="bg-gradient-blue-purple"
                      ),
-                     ui.br(),
-                     ui.layout_columns(
-                         ui.card(ui.card_header("Candlestick Analysis"), ui.output_ui("candle_chart_view"),
-                                 full_screen=True),
-                         col_widths=[12]
-                     )
-                 )
+                     fill=False
                  ),
+                 ui.br(),
+                 ui.card(
+                     ui.card_header("Price Trend Analysis"),
+                     ui.output_ui("price_chart_view"),
+                     full_screen=True
+                 ),
+                 ui.br(),
+                 ui.layout_columns(
+                     ui.card(ui.card_header("Candlestick Analysis"), ui.output_ui("candle_chart_view"),
+                             full_screen=True),
+                     col_widths=[12]
+                 )
+             ),
 
     # --- TAB 2: EDA (Integrated) ---
     ui.nav_panel("EDA",
                  ui.h3("Exploratory Data Analysis", class_="tab-header"),
-                 ui.layout_sidebar(
-                     ui.sidebar(
-                         ui.h4("Filters"),
-                         ui.input_select("eda_asset", "Asset:",
-                                         {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"}, selected="BTC")
-                     ),
                      ui.row(
                          ui.column(6, ui.card(ui.output_ui("corr_chart_view"))),
                          ui.column(6, ui.card(ui.output_ui("dist_chart_view")))
@@ -95,7 +95,7 @@ app_ui = ui.page_navbar(
                          ui.column(6, ui.card(ui.output_ui("stock_chart_view"))),
                          ui.column(6, ui.card(ui.output_ui("forex_chart_view")))
                      )
-                 )
+                 # )
                  ),
 
     # --- TAB 3: MODEL EVALUATION ---
@@ -134,27 +134,21 @@ app_ui = ui.page_navbar(
     # --- TAB 5: RAW DATA ---
     ui.nav_panel("Raw Data",
                  ui.h3("Raw Data", class_="tab-header"),
-                 ui.layout_sidebar(
-                     ui.sidebar(
-                         ui.h4("Filters"),
-                         ui.input_select("raw_asset", "Asset:",
-                                         {"ALL": "All", "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
-                                         selected="ALL"),
-                     ),
                      ui.layout_columns(
                          ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
                          col_widths=[3]
                      ),
                      ui.br(),
                      ui.card(ui.output_table("raw_table"))
-                 ),
+                 # ),
                  ),
     ui.nav_panel("Testy Michała",
     ui.pre(str(load_spark_model('hdfs://namenode:8020/models/btc_model')))
     ),
+    ),
+    # footer=ui.output_ui("dynamic_footer"),
+    ui.output_ui("dynamic_footer"),
     title = "CRYPTO ANALYTICS",
-    id = "nav",
-    footer = ui.output_ui("dynamic_footer")
     )
 
 
@@ -173,16 +167,11 @@ def server(input, output, session):
             "forex": load_forex_data()
         })
 
-    # 2. DATA FILTERING LOGIC
-    @reactive.Calc
-    def filtered_crypto():
-        df = data_store.get().get("crypto")
-        if df is None or df.empty: return pd.DataFrame()
+    # --- HELPER: GENERIC TIME FILTER ---
+    def filter_by_time(df, time_range, date_col='Datetime'):
+        """Filters any dataframe by the selected time range."""
+        if df is None or df.empty: return df
 
-        # Asset Filter
-        df_sub = df[df['Symbol'] == input.crypto_select()].copy()
-
-        # Time Filter
         cutoff_map = {
             "1H": pd.Timedelta(hours=1),
             "24H": pd.Timedelta(hours=24),
@@ -190,16 +179,33 @@ def server(input, output, session):
             "30D": pd.Timedelta(days=30)
         }
 
-        if input.time_range() in cutoff_map:
-            cutoff_time = df_sub['Datetime'].max() - cutoff_map[input.time_range()]
-            df_sub = df_sub[df_sub['Datetime'] >= cutoff_time]
+        if time_range in cutoff_map:
+            cutoff_time = df[date_col].max() - cutoff_map[time_range]
+            return df[df[date_col] >= cutoff_time].copy()
 
-        return df_sub.sort_values("Datetime")
+        return df
+
+    # 2. DATA FILTERING LOGIC
+    @reactive.Calc
+    def filtered_crypto_specific():
+        df = data_store.get().get("crypto")
+        if df is None or df.empty: return pd.DataFrame()
+
+        # 1. Filter Asset
+        df_sub = df[df['Symbol'] == input.crypto_select()].copy()
+
+        # 2. Filter Time
+        return filter_by_time(df_sub, input.time_range())
+
+    @reactive.Calc
+    def filtered_crypto_all():
+        df = data_store.get().get("crypto")
+        return filter_by_time(df, input.time_range())
 
     # Resampled Logic for Candlesticks
     @reactive.Calc
     def resampled_crypto():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return df
 
         # Dynamic Frequency
@@ -220,13 +226,25 @@ def server(input, output, session):
     # --- DASHBOARD OUTPUTS ---
     @render.ui
     def vbox_price():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return "Loading..."
         return f"${df['CurrentPrice'].iloc[-1]:,.2f}"
 
     @render.ui
+    def vbox_change_label():
+        range_labels = {
+            "1H": "Change (1h)",
+            "24H": "Change (24h)",
+            "7D": "Change (7d)",
+            "30D": "Change (30d)",
+            "ALL": "Change (All Time)"
+        }
+        # Default to "Change" if something unexpected happens
+        return range_labels.get(input.time_range(), "Change")
+
+    @render.ui
     def vbox_change():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return "-"
         start, end = df['CurrentPrice'].iloc[0], df['CurrentPrice'].iloc[-1]
         chg = ((end - start) / start) * 100
@@ -238,13 +256,13 @@ def server(input, output, session):
 
     @render.ui
     def vbox_vol():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return "-"
         return f"${df['CurrentPrice'].std():.2f}"
 
     @render.ui
     def price_chart_view():
-        return render_plotly_html(plot_price_trend(filtered_crypto()), height="400px")
+        return render_plotly_html(plot_price_trend(filtered_crypto_specific()), height="400px")
 
     @render.ui
     def candle_chart_view():
@@ -253,12 +271,12 @@ def server(input, output, session):
     # --- EDA OUTPUTS ---
     @render.ui
     def corr_chart_view():
-        return render_plotly_html(plot_correlation_matrix(data_store.get().get("crypto"), input.time_range()))
+        return render_plotly_html(plot_correlation_matrix(filtered_crypto_all(), input.time_range()))
 
     @render.ui
     def dist_chart_view():
         return render_plotly_html(
-            plot_return_distribution(data_store.get().get("crypto"), input.crypto_select(), input.time_range()))
+            plot_return_distribution(filtered_crypto_specific(), input.crypto_select(), input.time_range()))
 
     @render.ui
     def stock_chart_view():
@@ -298,36 +316,9 @@ def server(input, output, session):
     def eval_r2():
         return "0.89"
 
-
-    # @render.ui
-    # def eval_pred_chart():
-    #     df = filtered_crypto()
-    #     if df.empty: return ui.div("No Data")
-    #
-    #     # Mock prediction = Actual + Random Noise
-    #     df_pred = df.copy()
-    #     df_pred['Predicted'] = df_pred['CurrentPrice'] * np.random.normal(1, 0.01, len(df))
-    #
-    #     fig = go.Figure()
-    #     fig.add_trace(go.Scatter(x=df_pred['Datetime'], y=df_pred['CurrentPrice'], name='Actual'))
-    #     fig.add_trace(
-    #         go.Scatter(x=df_pred['Datetime'], y=df_pred['Predicted'], name='Predicted', line=dict(dash='dot')))
-    #     fig.update_layout(template="plotly_white", margin=dict(l=40, r=20, t=20, b=20), height=300)
-    #     return render_plotly_html(fig, height="300px")
-    #
-    # @render.ui
-    # def eval_resid_chart():
-    #     df = filtered_crypto()
-    #     if df.empty: return ui.div("No Data")
-    #     noise = np.random.normal(0, 50, len(df))
-    #     fig = px.scatter(x=df['Datetime'], y=noise)
-    #     fig.add_hline(y=0, line_dash="dash")
-    #     fig.update_layout(template="plotly_white", margin=dict(l=40, r=20, t=40, b=20), height=300)
-    #     return render_plotly_html(fig, height="300px")
-
     @reactive.Calc
     def mock_eval_data():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return pd.DataFrame()
 
         # Simulate predictions
@@ -436,15 +427,17 @@ def server(input, output, session):
 
     @render.table
     def raw_table():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         if df.empty: return pd.DataFrame()
         return df[['Datetime', 'Symbol', 'CurrentPrice', 'OpeningPrice']].head(50)
 
 
     @render.download(filename="crypto_data.csv")
     def download_csv():
-        df = filtered_crypto()
+        df = filtered_crypto_specific()
         yield df.to_csv(index=False)
 
 
-app = App(app_ui, server)
+www_dir = Path(__file__).parent / "www"
+
+app = App(app_ui, server, static_assets=www_dir)
