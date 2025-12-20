@@ -26,16 +26,20 @@ def render_plotly_html(fig, height="100%"):
 app_ui = ui.page_sidebar(
 # --- GLOBAL SIDEBAR ---
     ui.sidebar(
-        ui.h4("Filters", class_="sidebar-title"),
-        ui.input_select(
-            "crypto_select", "Asset:",
-            {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
-            selected="BTC"
-        ),
-        ui.input_select(
-            "time_range", "Time Range:",
-            {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days", "ALL": "All Available"},
-            selected="24H"
+        # Only show filters if NOT on Monitoring or Raw Data tabs
+        ui.panel_conditional(
+            "input.tabs != 'Monitoring' && input.tabs != 'Model Eval' && input.tabs != 'Testy Michała'",
+            ui.h4("Filters", class_="sidebar-title"),
+            ui.input_select(
+                "crypto_select", "Asset:",
+                {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
+                selected="BTC"
+            ),
+            ui.input_select(
+                "time_range", "Time Range:",
+                {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days", "ALL": "All Available"},
+                selected="24H"
+            ),
         ),
         ui.hr(),
         ui.h6("System Health"),
@@ -50,7 +54,6 @@ app_ui = ui.page_sidebar(
     ),
 
 ui.navset_card_tab(
-
     # --- TAB 1: DASHBOARD ---
     ui.nav_panel("Dashboard",
                  ui.h3("Live Market Overview", class_="tab-header"),
@@ -136,6 +139,11 @@ ui.navset_card_tab(
                  ui.h3("Raw Data", class_="tab-header"),
                      ui.layout_columns(
                          ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
+                           ui.input_select(
+                                            "source_select", label = "",
+                                            choices = {"crypto": "Cryptocurrency Prices", "stock": "Stock Prices", "forex": "Forex Prices"},
+                                            selected="Crypto"
+                                        ),
                          col_widths=[3]
                      ),
                      ui.br(),
@@ -145,6 +153,7 @@ ui.navset_card_tab(
     ui.nav_panel("Testy Michała",
     ui.pre(str(load_spark_model('hdfs://namenode:8020/models/btc_model')))
     ),
+    id="tabs",
     ),
     # footer=ui.output_ui("dynamic_footer"),
     ui.output_ui("dynamic_footer"),
@@ -192,7 +201,9 @@ def server(input, output, session):
     # 2. DATA FILTERING LOGIC
     @reactive.Calc
     def filtered_crypto_specific():
-        df = data_store.get().get("crypto")
+
+        data = data_store.get()
+        df = data.get("crypto")
         if df is None or df.empty: return pd.DataFrame()
 
         # 1. Filter Asset
@@ -203,8 +214,21 @@ def server(input, output, session):
 
     @reactive.Calc
     def filtered_crypto_all():
-        df = data_store.get().get("crypto")
-        return filter_by_time(df, input.time_range())
+        data = data_store.get()
+        return filter_by_time(data.get("crypto"), input.time_range())
+
+    @reactive.Calc
+    def filtered_stock():
+        data = data_store.get()
+        time_range = input.time_range()
+        if time_range == '1H' or time_range == '24H':
+            time_range = '7D'
+        return filter_by_time(data.get("stock"), time_range)
+
+    @reactive.Calc
+    def filtered_forex():
+        data = data_store.get()
+        return data.get("forex")
 
     # Resampled Logic for Candlesticks
     @reactive.Calc
@@ -226,6 +250,23 @@ def server(input, output, session):
         df_res['SMA30'] = df_res['CurrentPrice'].rolling(30).mean()
 
         return df_res
+
+    @reactive.Calc
+    def raw_data():
+        source = input.source_select()
+
+        if source == 'crypto':
+            df = filtered_crypto_specific()
+        elif source == 'stock':
+            df = filtered_stock()
+        else:
+            df = filtered_forex()
+
+        if df is None or df.empty:
+            return pd.DataFrame({"Message": [f"No data available for {source}"]})
+
+        return df.sort_values("Datetime", ascending=False)
+
 
     # --- DASHBOARD OUTPUTS ---
     @render.ui
@@ -279,16 +320,16 @@ def server(input, output, session):
 
     @render.ui
     def dist_chart_view():
-        return render_plotly_html(
-            plot_return_distribution(filtered_crypto_specific(), input.crypto_select(), input.time_range()))
+        df = filtered_crypto_specific()
+        return render_plotly_html(plot_return_distribution(df, input.crypto_select(), input.time_range()))
 
     @render.ui
     def stock_chart_view():
-        return render_plotly_html(plot_stock_indicators(data_store.get().get("stock")))
+        return render_plotly_html(plot_stock_indicators(filtered_stock()))
 
     @render.ui
     def forex_chart_view():
-        return render_plotly_html(plot_forex_volume(data_store.get().get("forex")))
+        return render_plotly_html(plot_forex_volume(filtered_forex()))
 
     # --- MODEL MOCKUPS (Simplified for brevity) ---
     @render.ui
@@ -431,15 +472,12 @@ def server(input, output, session):
 
     @render.table
     def raw_table():
-        df = filtered_crypto_specific()
-        if df.empty: return pd.DataFrame()
-        return df[['Datetime', 'Symbol', 'CurrentPrice', 'OpeningPrice']].head(50)
+        return raw_data().head(50)
 
 
     @render.download(filename="crypto_data.csv")
     def download_csv():
-        df = filtered_crypto_specific()
-        yield df.to_csv(index=False)
+        yield raw_data().to_csv(index=False)
 
 
 www_dir = Path(__file__).parent / "www"

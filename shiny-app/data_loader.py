@@ -1,8 +1,12 @@
 import pandas as pd
+import happybase
+import numpy as np
 import socket
+from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
 
+# --- SPARK CONNECTION HELPER ---
 
 def get_spark_session(app_name):
     try:
@@ -29,55 +33,124 @@ def get_spark_session(app_name):
         print(f"Error creating Spark session: {e}")
         return None
 
+# --- HBASE CONNECTION HELPER ---
 
-def load_crypto_data(hive_table_name: str) -> pd.DataFrame:
-    spark = get_spark_session(f"ShinyLoad-{hive_table_name}")
-    if not spark: return pd.DataFrame()
+def get_hbase_connection(host='hbase'):
+    """Establishes a connection to HBase using HappyBase."""
     try:
-        query = f"""
-                    SELECT 
-                        cast(Datetime as string) as Datetime_Str, 
-                        CurrentPrice,
-                        OpeningPrice,
-                        HighestDayPrice,
-                        LowestDayPrice,
-                        Symbol 
-                    FROM {hive_table_name} 
-                    ORDER BY Datetime DESC
-                """
-        df_spark = spark.sql(query)
-        df_pandas = df_spark.toPandas()
+        connection = happybase.Connection(host=host)
+        connection.open()
+        return connection
+    except Exception as e:
+        print(f"Error connecting to HBase: {e}")
+        return None
 
-        if not df_pandas.empty:
-            df_pandas['Datetime'] = pd.to_datetime(df_pandas['Datetime_Str'])
-            df_pandas['Symbol'] = df_pandas['Symbol'].astype(str).str.upper().str.strip()
+def parse_row_key(row_key_bytes):
+    """
+    Parses HBase row key.
+    Expected Format: Symbol#Timestamp#Granularity
+    Example: BTC#2025-11-20 00:45:00#1m
+    """
+    try:
+        decoded = row_key_bytes.decode('utf-8')
+        parts = decoded.split('#')
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+        return None, None, None
+    except:
+        return None, None, None
 
-            # Ensure numeric types for all price columns
-            cols = ['CurrentPrice', 'OpeningPrice', 'HighestDayPrice', 'LowestDayPrice']
-            for c in cols:
-                df_pandas[c] = pd.to_numeric(df_pandas[c], errors='coerce')
 
-            df_pandas = df_pandas.sort_values("Datetime")
+def _scan_hbase_table(table_name, symbols=None, target_granularity='1m'):
+    """
+    Generic function to scan crypto/stock data from HBase.
+    """
+    conn = get_hbase_connection()
+    if not conn:
+        return pd.DataFrame()
 
-        return df_pandas
+    data = []
+    try:
+        table = conn.table(table_name)
+
+        # Strategy: If symbols are known, use prefix scanning (faster).
+        # Otherwise, scan the whole table.
+        scanners = []
+        if symbols:
+            for sym in symbols:
+                # Prefix scan for specific symbol
+                scanners.append(table.scan(row_prefix=f"{sym}#".encode()))
+        else:
+            scanners = [table.scan()]
+
+        for scanner in scanners:
+            for key, value in scanner:
+                symbol, timestamp_str, granularity = parse_row_key(key)
+
+                # Filter by granularity (e.g., only load '1m' for charts or '1d' for indicators)
+                if target_granularity and granularity != target_granularity:
+                    continue
+
+                try:
+                    # Map HBase columns (bytes) to Pandas columns
+                    # Note: Using .get() with defaults to handle missing columns safely
+                    row = {
+                        'Symbol': symbol,
+                        'Datetime': pd.to_datetime(timestamp_str),
+
+                        # OHLC Mapping
+                        'CurrentPrice': float(value.get(b'ohlc:close', 0)),
+                        'OpeningPrice': float(value.get(b'ohlc:open', 0)),
+                        'HighestDayPrice': float(value.get(b'ohlc:high', 0)),
+                        'LowestDayPrice': float(value.get(b'ohlc:low', 0)),
+
+                        # Stock Indicators (Only present in '1d' granularity)
+                        'FiftyDayAveragePrice': float(value.get(b'indicators:ma_50_price', 'nan')),
+                        'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', 'nan')),
+
+                        # Volume
+                        'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
+                    }
+                    data.append(row)
+                except ValueError:
+                    continue  # Skip malformed rows
+
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df = df.sort_values("Datetime")
+
+        return df
+
+    except Exception as e:
+        print(f"Error scanning HBase table {table_name}: {e}")
+        return pd.DataFrame()
     finally:
-        pass
+        conn.close()
 
+# --- DATA LOADERS ---
+
+def load_crypto_data(table_name_ignored=None) -> pd.DataFrame:
+    """
+    Loads Crypto data from 'crypto_index_aggregates'.
+    Targets '1m' granularity for high-resolution dashboard charts.
+    """
+    # We ignore the Hive table name argument to keep function signature compatible with app.py
+    return _scan_hbase_table(
+        table_name='crypto_index_aggregates',
+        symbols=['BTC', 'ETH', 'SOL'],
+        target_granularity='1m'
+    )
 
 def load_stock_data() -> pd.DataFrame:
-    spark = get_spark_session("LoadStock")
-    if not spark: return pd.DataFrame()
-    try:
-        query = "SELECT cast(Datetime as string) as Datetime_Str, CurrentPrice, FiftyDayAveragePrice, TwoHundredDaysAveragePrice FROM IndexSnapshot WHERE IndexName = 'SNP' ORDER BY Datetime DESC"
-        df = spark.sql(query).toPandas()
-        if not df.empty:
-            df['Datetime'] = pd.to_datetime(df['Datetime_Str'])
-            for c in ['CurrentPrice', 'FiftyDayAveragePrice', 'TwoHundredDaysAveragePrice']:
-                df[c] = pd.to_numeric(df[c], errors='coerce')
-            df = df.sort_values("Datetime")
-        return df
-    finally:
-        pass
+    """
+    Loads Stock data from 'crypto_index_aggregates'.
+    Targets '1d' granularity because MA_50 and MA_200 are only calculated daily.
+    """
+    return _scan_hbase_table(
+        table_name='crypto_index_aggregates',
+        symbols=['SNP', 'DJI', 'NIM'],
+        target_granularity='1d'
+    )
 
 
 def load_forex_data() -> pd.DataFrame:

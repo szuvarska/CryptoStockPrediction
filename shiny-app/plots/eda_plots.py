@@ -46,16 +46,12 @@ def plot_return_distribution(df, symbol, time_range_label=""):
     if df is None or df.empty:
         return _empty_plot("No Data")
 
-    asset_df = df[df['Symbol'] == symbol].copy()
-    if asset_df.empty:
-        return _empty_plot(f"No Data found for {symbol}")
-
-    asset_df = asset_df.sort_values("Datetime")
-    asset_df['Return'] = asset_df['CurrentPrice'].pct_change() * 100
-    asset_df = asset_df.dropna()
+    df = df.sort_values("Datetime")
+    df['Return'] = df['CurrentPrice'].astype(float).pct_change() * 100
+    df = df.dropna(subset=['Return'])
 
     fig = px.histogram(
-        asset_df,
+        df,
         x="Return",
         nbins=40,
         title=f"{symbol} Return Distribution ({time_range_label})",
