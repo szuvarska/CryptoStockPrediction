@@ -22,6 +22,29 @@ body {
     color: var(--text-main);
 }
 
+/* --- BRANDING (TITLE & LOGO) --- */
+.app-brand {
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--text-main);
+    font-size: 1.3rem;
+    display: flex;
+    align-items: center;
+}
+.app-logo {
+    margin-right: 12px;
+    height: 32px;
+    width: 32px;
+    object-fit: contain;
+}
+
+/* --- SIDEBAR --- */
+.sidebar-title {
+    margin-top: 10px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
 /* --- TABLES --- */
 .table th, .table td, .table tr {
     text-align: left !important;
@@ -48,6 +71,15 @@ body {
     font-weight: 600;
     color: var(--text-main);
     padding: 15px 20px;
+}
+
+/* --- TAB HEADERS --- */
+.tab-header {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    padding-left: 15px;
+    border-left: 5px solid var(--primary-color);
+    color: var(--text-main);
 }
 
 /* --- STATUS COLORS --- */

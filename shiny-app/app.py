@@ -26,7 +26,7 @@ def render_plotly_html(fig, height="100%"):
 app_ui = ui.page_sidebar(
 # --- GLOBAL SIDEBAR ---
     ui.sidebar(
-        ui.h4("Filters", style="margin-top:10px;"),
+        ui.h4("Filters", class_="sidebar-title"),
         ui.input_select(
             "crypto_select", "Asset:",
             {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
@@ -148,8 +148,12 @@ ui.navset_card_tab(
     ),
     # footer=ui.output_ui("dynamic_footer"),
     ui.output_ui("dynamic_footer"),
-    title = "CRYPTO ANALYTICS",
+    title = ui.span(
+        ui.img(src="https://cdn-icons-png.flaticon.com/512/1822/1822219.png", class_="app-logo"),
+        "CRYPTO ANALYTICS",
+        class_="app-brand"
     )
+)
 
 
 # --- 5. SERVER ---
