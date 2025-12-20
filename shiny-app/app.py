@@ -261,10 +261,17 @@ def server(input, output, session):
             df = filtered_stock()
         else:
             df = filtered_forex()
+            df['VolumeTraded'] = df['VolumeTraded'].astype('int32')
+            df = df.reindex(sorted(df.columns), axis=1)
 
         if df is None or df.empty:
             return pd.DataFrame({"Message": [f"No data available for {source}"]})
 
+        for col in ['PrevPrice', 'Color', 'Datetime_Str']:
+            if col in df.columns:
+                df.drop([col], inplace = True, axis = 1)
+
+        df["Datetime"] = df["Datetime"].dt.strftime('%Y-%m-%d %H:%M')
         return df.sort_values("Datetime", ascending=False)
 
 
