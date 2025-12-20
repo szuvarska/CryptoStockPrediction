@@ -1,0 +1,86 @@
+/* --- CSS VARIABLES --- */
+:root {
+    --primary-color: #0d6efd;
+    --bg-color: #f4f6f9;
+    --text-main: #2c3e50;
+    --text-muted: #8a8d99;
+
+    --status-ok: #00cc96;
+    --status-warn: #ffa500;
+    --status-crit: #ef553b;
+
+    --card-bg: #ffffff;
+    --border-color: #f0f0f0;
+    --footer-bg: #1a1d29;
+}
+
+/* --- GLOBAL LAYOUT --- */
+body {
+    background-color: var(--bg-color);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    padding-bottom: 50px;
+    color: var(--text-main);
+}
+
+/* --- TABLES --- */
+.table th, .table td {
+    text-align: left !important;
+    vertical-align: middle;
+}
+
+/* Value Boxes (The Metrics) */
+.value-box-area {
+    margin-bottom: 20px;
+}
+
+/* --- CARDS --- */
+.card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    border-radius: 8px;
+    background-color: var(--card-bg);
+}
+
+.card-header {
+    background-color: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    color: var(--text-main);
+    padding: 15px 20px;
+}
+
+/* --- STATUS COLORS --- */
+.status-ok { color: var(--status-ok); font-weight: bold; }
+.status-warn { color: var(--status-warn); font-weight: bold; }
+.status-crit { color: var(--status-crit); font-weight: bold; }
+
+/* --- FOOTER --- */
+.app-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--footer-bg);
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    font-size: 0.85rem;
+    border-top: 1px solid #2d3342;
+    z-index: 9999;
+}
+
+.footer-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status-dot {
+    height: 10px;
+    width: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}

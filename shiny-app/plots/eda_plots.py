@@ -1,9 +1,9 @@
 import plotly.express as px
 import plotly.graph_objects as go
-import pandas as pd
+from plots.helper_plots import  _empty_plot
 
 
-def plot_correlation_matrix(df):
+def plot_correlation_matrix(df, time_range_label=""):
     if df is None or df.empty:
         return _empty_plot("No Data for Correlation")
 
@@ -19,7 +19,7 @@ def plot_correlation_matrix(df):
     returns_df = pivot_df.pct_change().dropna()
 
     if returns_df.empty or returns_df.shape[1] < 2:
-        return _empty_plot("Need >1 Asset for Correlation")
+        return _empty_plot("Insufficient assets for correlation")
 
     fig = px.imshow(
         returns_df.corr(),
@@ -27,9 +27,8 @@ def plot_correlation_matrix(df):
         aspect="auto",
         color_continuous_scale="RdBu_r",
         zmin=-1, zmax=1,
-        title="Asset Correlation Matrix (Daily Returns)",
-        template="plotly_white",
-        labels=dict(x="Asset", y="Asset", color="Corr")  # Rename legend/hover labels
+        title=f"Asset Correlation ({time_range_label})",
+        template="plotly_white"
     )
 
     fig.update_layout(
@@ -43,7 +42,7 @@ def plot_correlation_matrix(df):
     return fig
 
 
-def plot_return_distribution(df, symbol):
+def plot_return_distribution(df, symbol, time_range_label=""):
     if df is None or df.empty:
         return _empty_plot("No Data")
 
@@ -59,7 +58,7 @@ def plot_return_distribution(df, symbol):
         asset_df,
         x="Return",
         nbins=40,
-        title=f"{symbol} Return Distribution",
+        title=f"{symbol} Return Distribution ({time_range_label})",
         template="plotly_white",
         color_discrete_sequence=["#0d6efd"]
     )
@@ -75,7 +74,7 @@ def plot_return_distribution(df, symbol):
 
 
 def plot_stock_indicators(df_stock):
-    if df_stock is None or df_stock.empty: return _empty_plot("No Stock Data")
+    if df_stock is None or df_stock.empty: return _empty_plot("S&P 500 Data Unavailable")
 
     fig = go.Figure()
     # Price Line
@@ -93,7 +92,7 @@ def plot_stock_indicators(df_stock):
         template="plotly_white",
         hovermode="x unified",
         margin=dict(l=20, r=20, t=40, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=0.95, xanchor="right", x=1)
     )
 
     fig.update_yaxes(ticksuffix="  ")
@@ -102,7 +101,7 @@ def plot_stock_indicators(df_stock):
 
 
 def plot_forex_volume(df_forex):
-    if df_forex is None or df_forex.empty: return _empty_plot("No Forex Data")
+    if df_forex is None or df_forex.empty: return _empty_plot("Forex Data Unavailable")
 
     # Resample to daily if needed, or plot raw stream
     # Assuming daily aggregation for volume makes sense
@@ -111,15 +110,4 @@ def plot_forex_volume(df_forex):
     fig = px.bar(df_daily, x='Datetime', y='VolumeTraded', title="Forex Daily Volume", template="plotly_white")
     fig.update_traces(marker_color='#636efa')
     fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-    return fig
-
-
-def _empty_plot(text):
-    fig = go.Figure()
-    fig.add_annotation(text=text, showarrow=False, font={"size": 20})
-    fig.update_layout(
-        xaxis=dict(showgrid=False, showticklabels=False),
-        yaxis=dict(showgrid=False, showticklabels=False),
-        margin=dict(l=0, r=0, t=0, b=0)
-    )
     return fig
