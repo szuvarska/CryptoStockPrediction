@@ -271,6 +271,7 @@ def server(input, output, session):
             if col in df.columns:
                 df.drop([col], inplace = True, axis = 1)
 
+        df["Datetime"] = pd.to_datetime(df["Datetime"])
         df["Datetime"] = df["Datetime"].dt.strftime('%Y-%m-%d %H:%M')
         return df.sort_values("Datetime", ascending=False)
 

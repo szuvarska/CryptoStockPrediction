@@ -170,7 +170,7 @@ def load_forex_data() -> pd.DataFrame:
 
 
 def load_spark_model(path: str):
-    spark = get_spark_session("LoadModel")
+    spark = get_spark_session("LoadModel1")
     # docelowo "hdfs://namenode:8020/models/btc_model"
     # Model przyjmuje dane:
     #   |timestamp|BTC|NIM|SNP|DJI|SOL|ETH|BTC_next_close|NIM_next_close|
