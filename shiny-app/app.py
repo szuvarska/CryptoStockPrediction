@@ -3,9 +3,10 @@ import numpy as np
 from shiny import App, ui, reactive, render
 from faicons import icon_svg
 from pathlib import Path
+import os
 
 # --- Local Imports (Refactored Modules) ---
-from data_loader import load_crypto_data, load_stock_data, load_forex_data, load_spark_model
+from data_loader import load_unified_data, load_forex_data, load_spark_model
 from plots.eda_plots import (
     plot_correlation_matrix,
     plot_return_distribution,
@@ -28,11 +29,11 @@ app_ui = ui.page_sidebar(
     ui.sidebar(
         # Only show filters if NOT on Monitoring or Raw Data tabs
         ui.panel_conditional(
-            "input.tabs != 'Monitoring' && input.tabs != 'Model Eval' && input.tabs != 'Testy Michała'",
+            "input.tabs != 'Monitoring' && input.tabs != 'Raw Data' && input.tabs != 'Testy Michała'",
             ui.h4("Filters", class_="sidebar-title"),
             ui.input_select(
                 "crypto_select", "Asset:",
-                {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana"},
+                {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "SNP": "S&P 500", "NIM": "NASDAQ", "DJI": "Dow Jones"},
                 selected="BTC"
             ),
             ui.input_select(
@@ -141,7 +142,7 @@ ui.navset_card_tab(
                          ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
                            ui.input_select(
                                             "source_select", label = "",
-                                            choices = {"crypto": "Cryptocurrency Prices", "stock": "Stock Prices", "forex": "Forex Prices"},
+                                            choices = {"crypto": "Cryptocurrency Prices", "forex": "Forex Prices"},
                                             selected="Crypto"
                                         ),
                          col_widths=[3]
@@ -175,8 +176,7 @@ def server(input, output, session):
     def _load_data():
         # Using a dictionary to store all datasets cleanly
         data_store.set({
-            "crypto": load_crypto_data("CryptocurrencySnapshot"),
-            "stock": load_stock_data(),
+            "crypto": load_unified_data(),
             "forex": load_forex_data()
         })
 
@@ -218,14 +218,6 @@ def server(input, output, session):
         return filter_by_time(data.get("crypto"), input.time_range())
 
     @reactive.Calc
-    def filtered_stock():
-        data = data_store.get()
-        time_range = input.time_range()
-        if time_range == '1H' or time_range == '24H':
-            time_range = '7D'
-        return filter_by_time(data.get("stock"), time_range)
-
-    @reactive.Calc
     def filtered_forex():
         data = data_store.get()
         return data.get("forex")
@@ -257,8 +249,8 @@ def server(input, output, session):
 
         if source == 'crypto':
             df = filtered_crypto_specific()
-        elif source == 'stock':
-            df = filtered_stock()
+        # elif source == 'stock':
+        #     df = filtered_stock()
         else:
             df = filtered_forex()
             df['VolumeTraded'] = df['VolumeTraded'].astype('int32')
@@ -333,7 +325,7 @@ def server(input, output, session):
 
     @render.ui
     def stock_chart_view():
-        return render_plotly_html(plot_stock_indicators(filtered_stock()))
+        return render_plotly_html(plot_stock_indicators(filtered_crypto_specific()))
 
     @render.ui
     def forex_chart_view():
@@ -465,13 +457,16 @@ def server(input, output, session):
     def mon_table():
         data = data_store.get()
         rows = []
+        frequencies = {"crypto": "15 seconds", "stock": "60 seconds", "forex": "60 seconds"}
+
         for name, df in data.items():
             if df is not None and not df.empty:
                 rows.append({
                     "Source": name.title(),
                     "Latest Timestamp": df['Datetime'].max().strftime('%Y-%m-%d %H:%M'),
                     "Rows": len(df),
-                    "Status": "OK"
+                    "Status": "OK",
+                    "Frequency of Data Inflow": frequencies[name]
                 })
             else:
                 rows.append({"Source": name.title(), "Latest Timestamp": "-", "Rows": 0, "Status": "MISSING"})
@@ -488,6 +483,7 @@ def server(input, output, session):
         yield raw_data().to_csv(index=False)
 
 
-www_dir = Path(__file__).parent / "www"
+# www_dir = Path(__file__).parent / "www"
+www_dir =  "/opt/shiny-app/www"
 
 app = App(app_ui, server, static_assets=www_dir)

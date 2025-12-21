@@ -5,6 +5,8 @@ import socket
 from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
+from datetime import datetime, timedelta
+from line_profiler import profile
 
 # --- SPARK CONNECTION HELPER ---
 
@@ -45,112 +47,91 @@ def get_hbase_connection(host='hbase'):
         print(f"Error connecting to HBase: {e}")
         return None
 
-def parse_row_key(row_key_bytes):
-    """
-    Parses HBase row key.
-    Expected Format: Symbol#Timestamp#Granularity
-    Example: BTC#2025-11-20 00:45:00#1m
-    """
-    try:
-        decoded = row_key_bytes.decode('utf-8')
-        parts = decoded.split('#')
-        if len(parts) == 3:
-            return parts[0], parts[1], parts[2]
-        return None, None, None
-    except:
-        return None, None, None
-
-
-def _scan_hbase_table(table_name, symbols=None, target_granularity='1m'):
-    """
-    Generic function to scan crypto/stock data from HBase.
-    """
+@profile
+def load_unified_data():
     conn = get_hbase_connection()
-    if not conn:
-        return pd.DataFrame()
+    if not conn: return pd.DataFrame()
 
-    data = []
-    try:
-        table = conn.table(table_name)
+    table = conn.table('crypto_index_aggregates')
 
-        # Strategy: If symbols are known, use prefix scanning (faster).
-        # Otherwise, scan the whole table.
-        scanners = []
-        if symbols:
-            for sym in symbols:
-                # Prefix scan for specific symbol
-                scanners.append(table.scan(row_prefix=f"{sym}#".encode()))
-        else:
-            scanners = [table.scan()]
-
-        for scanner in scanners:
-            for key, value in scanner:
-                symbol, timestamp_str, granularity = parse_row_key(key)
-
-                # Filter by granularity (e.g., only load '1m' for charts or '1d' for indicators)
-                if target_granularity and granularity != target_granularity:
-                    continue
-
-                try:
-                    # Map HBase columns (bytes) to Pandas columns
-                    # Note: Using .get() with defaults to handle missing columns safely
-                    row = {
-                        'Symbol': symbol,
-                        'Datetime': pd.to_datetime(timestamp_str),
-
-                        # OHLC Mapping
-                        'CurrentPrice': float(value.get(b'ohlc:close', 0)),
-                        'OpeningPrice': float(value.get(b'ohlc:open', 0)),
-                        'HighestDayPrice': float(value.get(b'ohlc:high', 0)),
-                        'LowestDayPrice': float(value.get(b'ohlc:low', 0)),
-
-                        # Stock Indicators (Only present in '1d' granularity)
-                        'FiftyDayAveragePrice': float(value.get(b'indicators:ma_50_price', 'nan')),
-                        'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', 'nan')),
-
-                        # Volume
-                        'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
-                    }
-                    data.append(row)
-                except ValueError:
-                    continue  # Skip malformed rows
-
-        df = pd.DataFrame(data)
-        if not df.empty:
-            df = df.sort_values("Datetime")
-
-        return df
-
-    except Exception as e:
-        print(f"Error scanning HBase table {table_name}: {e}")
-        return pd.DataFrame()
-    finally:
+    # --- STEP 1: Find the Global Max Timestamp ---
+    # We scan the table briefly to find the most recent entry
+    # Scanning in reverse is the fastest way to find the 'latest' row
+    print("Finding latest data point in HBase...")
+    latest_rows = list(table.scan(limit=5, reverse=True))
+    if not latest_rows:
         conn.close()
+        return pd.DataFrame()
 
-# --- DATA LOADERS ---
+    # Extract max_ts from the key of the first row returned by reverse scan
+    # Key format: Symbol#Timestamp#Granularity
+    max_ts_str = latest_rows[0][0].decode().split('#')[1]
+    max_ts = pd.to_datetime(max_ts_str)
 
-def load_crypto_data(table_name_ignored=None) -> pd.DataFrame:
-    """
-    Loads Crypto data from 'crypto_index_aggregates'.
-    Targets '1m' granularity for high-resolution dashboard charts.
-    """
-    # We ignore the Hive table name argument to keep function signature compatible with app.py
-    return _scan_hbase_table(
-        table_name='crypto_index_aggregates',
-        symbols=['BTC', 'ETH', 'SOL'],
-        target_granularity='1m'
-    )
+    # --- STEP 2: Define Relative Boundaries ---
+    t_24h_limit = max_ts - timedelta(hours=24)
+    t_7d_limit = max_ts - timedelta(days=7)
 
-def load_stock_data() -> pd.DataFrame:
-    """
-    Loads Stock data from 'crypto_index_aggregates'.
-    Targets '1d' granularity because MA_50 and MA_200 are only calculated daily.
-    """
-    return _scan_hbase_table(
-        table_name='crypto_index_aggregates',
-        symbols=['SNP', 'DJI', 'NIM'],
-        target_granularity='1d'
-    )
+    crypto_symbols = ['BTC', 'ETH', 'SOL']
+    stock_symbols = ['SNP', 'DJI', 'NIM']
+    all_symbols = crypto_symbols + stock_symbols
+
+    data_rows = []
+
+    # --- STEP 3: Tiered Scan ---
+    for symbol in all_symbols:
+        asset_type = 'Crypto' if symbol in crypto_symbols else 'Stock'
+
+        # Scan with prefix for efficiency
+        for key, value in table.scan(row_prefix=f"{symbol}#".encode()):
+            parts = key.decode().split('#')
+            if len(parts) != 3: continue
+
+            ts = pd.to_datetime(parts[1])
+            gran = parts[2]
+
+            # Logic: 1m for last 24h, 10m for last 7d (minus 24h), 1d for rest
+            keep = False
+            if gran == '1m' and ts > t_24h_limit:
+                keep = True
+            elif gran == '10m' and t_7d_limit < ts <= t_24h_limit:
+                keep = True
+            elif gran == '1d' and ts <= t_7d_limit:
+                keep = True
+
+            if keep:
+                data_rows.append({
+                    'Datetime': ts,
+                    'Symbol': symbol,
+                    'Type': asset_type,
+
+                    # OHLC Mapping
+                    'CurrentPrice': float(value.get(b'ohlc:close', 0)),
+                    'OpeningPrice': float(value.get(b'ohlc:open', 0)),
+                    'HighestDayPrice': float(value.get(b'ohlc:high', 0)),
+                    'LowestDayPrice': float(value.get(b'ohlc:low', 0)),
+
+                    # Stock Indicators
+                    'FiftyDayAveragePrice': float(value.get(b'indicators:ma_50_price', np.nan)),
+                    'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', np.nan)),
+
+                    # Volume
+                    'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
+                })
+
+    conn.close()
+    if not data_rows: return pd.DataFrame()
+
+    # --- STEP 4: Merge and Pad Moving Averages ---
+    df = pd.DataFrame(data_rows).sort_values(['Symbol', 'Datetime'])
+
+    # Fill NaNs: Group by symbol so BTC doesn't get SNP's averages
+    # ffill() carries the last known daily MA forward into the 1m/10m rows
+    # bfill() ensures the very first rows aren't empty if data starts mid-day
+    df['FiftyDayAveragePrice'] = df.groupby('Symbol')['FiftyDayAveragePrice'].ffill().bfill()
+    df['TwoHundredDaysAveragePrice'] = df.groupby('Symbol')['TwoHundredDaysAveragePrice'].ffill().bfill()
+
+    return df
 
 
 def load_forex_data() -> pd.DataFrame:
@@ -177,3 +158,108 @@ def load_spark_model(path: str):
     #   SNP_next_close|DJI_next_close|SOL_next_close|ETH_next_close|
     # i przewiduje BTC_next_close w oknie 1m
     return LinearRegressionModel.load(path)
+
+# --- Preprocess do modelu ---
+
+import happybase
+from datetime import datetime
+
+from pyspark.sql import SparkSession, Row
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.functions import col, lead, first
+from pyspark.ml.feature import VectorAssembler
+
+def prepare_single_row_for_prediction(
+    spark: SparkSession,
+    hbase_host: str = "hbase",
+    table_name: str = "crypto_index_aggregates",
+):
+    symbols = ["BTC", "NIM", "SNP", "DJI", "SOL", "ETH"]
+    feature_cols = ["NIM", "SNP", "DJI", "SOL", "ETH"]
+    label_col = "BTC_next_close"
+
+    # --- HBase ---
+    connection = happybase.Connection(host=hbase_host)
+    table = connection.table(table_name)
+
+    rows = []
+    for key, data in table.scan():
+        if b"#1m" not in key:
+            continue
+
+        try:
+            symbol, ts_str, interval = key.decode().split("#")
+            timestamp = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            continue
+
+        row_dict = {
+            "symbol": symbol,
+            "timestamp": timestamp,
+            "interval": interval,
+        }
+
+        for col_name, val in data.items():
+            name = col_name.decode()
+            try:
+                row_dict[name] = float(val.decode())
+            except ValueError:
+                row_dict[name] = val.decode()
+
+        rows.append(Row(**row_dict))
+
+    df = spark.createDataFrame(rows)
+
+    # --- Filtr symboli ---
+    df = df.filter(col("symbol").isin(symbols))
+
+    # --- next_close ---
+    window = Window.partitionBy("symbol").orderBy("timestamp")
+    df = df.withColumn("next_close", lead("ohlc:close", 1).over(window))
+
+    # --- Pivot close ---
+    df_close = (
+        df.groupBy("timestamp")
+        .pivot("symbol", symbols)
+        .agg(first("ohlc:close"))
+    )
+
+    # --- Pivot next_close ---
+    df_next = (
+        df.groupBy("timestamp")
+        .pivot("symbol", symbols)
+        .agg(first("next_close"))
+    )
+
+    for sym in symbols:
+        if sym in df_next.columns:
+            df_next = df_next.withColumnRenamed(sym, f"{sym}_next_close")
+
+    df_pivot = df_close.join(df_next, on="timestamp", how="inner")
+
+    for c in df_pivot.columns:
+        if c != "timestamp":
+            df_pivot = df_pivot.withColumn(c, col(c).cast("double"))
+
+    df_pivot = df_pivot.dropna(subset=feature_cols + [label_col])
+ 
+    assembler = VectorAssembler(
+        inputCols=feature_cols,
+        outputCol="features"
+    )
+
+    df_ml = assembler.transform(df_pivot)
+    df_ml = df_ml.select(
+        "timestamp",
+        "features",
+        col(label_col).alias("label")
+    )
+
+    last_row = (
+        df_ml
+        .orderBy(col("timestamp").desc())
+        .limit(1)
+    )
+
+    return last_row
