@@ -24,5 +24,17 @@ Navigate to the project directory
 ```bash
 cd <project-folder>
 ```
+
+
 Start the application with Docker Compose
+```bash
 cd <project-folder>
+```
+
+Access the application on localhost:8000
+
+Stopping the Application
+```bash
+ctrl + C
+docker-compose down
+```
