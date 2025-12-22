@@ -125,7 +125,8 @@ ui.navset_card_tab(
                  ui.layout_columns(
                      ui.value_box("Pipeline Status", ui.output_ui("mon_status_main")),
                      ui.value_box("Data Freshness", ui.output_ui("mon_freshness")),
-                     ui.value_box("Total Records", ui.output_ui("mon_count")),
+                     # ui.value_box("Total Records", ui.output_ui("mon_count")),
+                     ui.value_box("Data Refresh", ui.output_ui("mon_latency")),
                      fill=False
                  ),
                  ui.br(),
@@ -453,24 +454,44 @@ def server(input, output, session):
         df = data_store.get().get("crypto")
         return f"{len(df):,}" if df is not None else "0"
 
+    @render.ui
+    def mon_latency():
+        return "60 seconds"
+
+
+    # @render.table
+    # def mon_table():
+    #     data = data_store.get()
+    #     rows = []
+    #     frequencies = {"crypto": "15 seconds", "stock": "60 seconds", "forex": "60 seconds"}
+    #
+    #     for name, df in data.items():
+    #         if df is not None and not df.empty:
+    #             rows.append({
+    #                 "Source": name.title(),
+    #                 "Latest Timestamp": df['Datetime'].max().strftime('%Y-%m-%d %H:%M'),
+    #                 "Rows": len(df),
+    #                 "Status": "OK",
+    #                 "Frequency of Data Inflow": frequencies[name]
+    #             })
+    #         else:
+    #             rows.append({"Source": name.title(), "Latest Timestamp": "-", "Rows": 0, "Status": "MISSING"})
+    #     return pd.DataFrame(rows)
+
     @render.table
     def mon_table():
-        data = data_store.get()
-        rows = []
-        frequencies = {"crypto": "15 seconds", "stock": "60 seconds", "forex": "60 seconds"}
+        df = data_store.get().get('crypto')
+        mon_df = df.groupby('Symbol').agg(
+            Latest_Timestamp=('Datetime', 'max'),
+            Rows=('Datetime', 'count')
+        ).reset_index()
 
-        for name, df in data.items():
-            if df is not None and not df.empty:
-                rows.append({
-                    "Source": name.title(),
-                    "Latest Timestamp": df['Datetime'].max().strftime('%Y-%m-%d %H:%M'),
-                    "Rows": len(df),
-                    "Status": "OK",
-                    "Frequency of Data Inflow": frequencies[name]
-                })
-            else:
-                rows.append({"Source": name.title(), "Latest Timestamp": "-", "Rows": 0, "Status": "MISSING"})
-        return pd.DataFrame(rows)
+        mon_df['Latest Timestamp'] = mon_df['Latest_Timestamp'].dt.strftime('%Y-%m-%d %H:%M')
+
+        mon_df['Status'] = 'OK'
+
+        return mon_df[['Symbol', 'Latest Timestamp', 'Rows', 'Status']]
+
 
 
     @render.table
