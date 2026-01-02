@@ -1,4 +1,3 @@
-# tests/conftest.py
 import pytest
 import base64
 from datetime import datetime
@@ -15,7 +14,7 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
 
     # Get existing extras (or create list)
-    extra = getattr(report, "extra", [])
+    extra = getattr(report, "extras", [])
 
     if report.when == "call":
         # Check if the test failed

@@ -40,5 +40,5 @@ def find_new_paths(spark, base_path, meta_path):
     if not new_dirs:
         print("No new data.")
     
-    paths_to_read = [BASE_PATH + d for d in new_dirs]
+    paths_to_read = [base_path + d for d in new_dirs]
     return paths_to_read
