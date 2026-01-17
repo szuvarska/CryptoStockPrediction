@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 
 # --- Local Imports (Refactored Modules) ---
-from data_loader import load_unified_data, load_forex_data, load_spark_model, load_historical_data, get_latest_ticks
+from data_loader import load_forex_data, load_spark_model, load_historical_data, get_latest_ticks
 from plots.eda_plots import (
     plot_correlation_matrix,
     plot_return_distribution,
@@ -212,7 +212,6 @@ def server(input, output, session):
 
         # WRAP IN TRY-EXCEPT TO PREVENT CRASHING
         with reactive.isolate():
-
             try:
                 now = datetime.now().strftime("%H:%M:%S")
                 print(f"[{now}] DEBUG: _update_prices triggered")
@@ -469,20 +468,21 @@ def server(input, output, session):
         is_critical = False
         is_warning = False
 
-        for name, df in data.items():
-            if df is None or df.empty:
-                status_msgs.append(f"{name.title()}: Empty")
-                is_warning = True
-                continue
+        data = data_store.get()
+        df = data.get("crypto")
 
-            last_time = df['Datetime'].max() if 'Datetime' in df else pd.Timestamp.min
-            age = pd.Timestamp.now() - last_time
+        if df is None or df.empty:
+            status_msgs.append(f"Crypto Data Empty")
+            is_warning = True
 
-            if age > pd.Timedelta(hours=24):
-                is_critical = True
-                status_msgs.append(f"{name.title()}: Stale (>24h)")
-            elif age > pd.Timedelta(hours=4):
-                is_warning = True
+        last_time = df['Datetime'].max() if 'Datetime' in df else pd.Timestamp.min
+        age = pd.Timestamp.now() - last_time
+
+        if age > pd.Timedelta(hours=24):
+            is_critical = True
+            status_msgs.append(f"Crypto Data: Stale (>24h)")
+        elif age > pd.Timedelta(hours=4):
+            is_warning = True
 
         if is_critical: return "CRITICAL - Data Stale", "#ef553b"
         if is_warning: return "DEGRADED - Check Feeds", "#ffa500"
