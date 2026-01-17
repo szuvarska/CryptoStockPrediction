@@ -5,7 +5,7 @@ This folder contains the source code for the frontend application built using **
 ## App Structure
 
 * **`app.py`**: The main entry point. Defines the UI layout and Server logic.
-* **`data_loader.py`**: Handles data retrieval from **HBase** (Real-time) and **Hive/Spark** (Historical). It includes logic to detect if running in Docker or locally.
+* **`data_loader.py`**: Handles data retrieval from **HBase** (Real-time + Batch Views) and minor data from **Hive/Spark**. It includes logic to detect if running in Docker or locally.
 * **`plots/`**: Contains Python modules for generating Plotly figures:
   * `dashboard_plots.py`
   * `eda_plots.py`
