@@ -1,40 +1,53 @@
-# CryptoStockPrediction
+# Predicting Cryptocurrency Prices Based on Stock Behaviour
 
-App for analyzing Crypto Currency and Stock data.
+## 1. Project Overview
 
-Follow the steps below to run the application locally using **Docker Compose**.
+This project aims to develop a system that enables traders and investors to track and analyse
+cryptocurrency and stock market data. The system collects and stores historical data on
+cryptocurrency prices, traditional currency exchange rates, and stock market values,
+allowing users to generate meaningful insights and trends across these financial domains.
 
-## Prerequisites
+It includes a feature that predicts the behaviour of popular cryptocurrencies such as Bitcoin,
+Ethereum, and Solana based on the strength of the US Dollar and current stock prices (S&P
+500). This functionality is designed to assist users in making informed decisions about when to
+buy or sell specific assets.
 
-Make sure you have the following installed on your machine:
+## 2. Repository Structure
 
-- **Docker**
-- **Docker Compose**
+* **[`apache-stack/`](apache-stack/)**: Contains the infrastructure definitions (Docker Compose), HDFS setup scripts, and notebooks.
+* **[`shiny-app/`](shiny-app/)**: Contains the source code for the visualization dashboard.
 
-You can verify the installation with:
-```bash
-docker --version
-docker-compose --version
-```
-Download the project folder
-```bash
-git clone <repository-url>
-```
-Navigate to the project directory
-```bash
-cd <project-folder>
-```
+## 3. Technologies Used
 
+* **Infrastructure**: Docker, Docker Compose
+* **Ingestion**: Apache NiFi
+* **Messaging**: Apache Kafka, Zookeeper
+* **Storage**: HDFS, Apache Hive, Apache HBase, PostgreSQL (Metastore)
+* **Processing**: Apache Spark (PySpark), Spark MLlib
+* **Web App**: Shiny for Python
 
-Start the application with Docker Compose
-```bash
-cd <project-folder>
-```
+## 4. Getting Started
 
-Access the application on localhost:8000
+### Prerequisites
 
-Stopping the Application
-```bash
-ctrl + C
-docker-compose down
-```
+* **Docker** and **Docker Compose** installed on your machine.
+* **Git** for cloning the repository.
+
+### Quick Start
+
+1. Navigate to the infrastructure folder:
+   ```bash
+   cd apache-stack
+   ```
+2. Start the entire stack:
+   ```bash
+   docker-compose up -d --build
+   ```
+3. Initialize HDFS directories (wait for containers to be healthy first):
+   ```bash
+   ./hdfs-setup.sh
+   ```
+4. Access the Dashboard at **[http://localhost:8000](http://localhost:8000)**.
+
+For detailed provisioning instructions, read [apache-stack/README.md](apache-stack/README.md).
+For application details, read [shiny-app/README.md](shiny-app/README.md).
