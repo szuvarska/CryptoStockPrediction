@@ -6,13 +6,17 @@ from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
 from datetime import datetime, timedelta
 
+# --- LOCAL IMPORTS ---
+from config import HBASE_HOST, SPARK_MASTER, HIVE_METASTORE, CRYPTO_SYMBOLS, ALL_SYMBOLS
+from utils import should_keep_record
+
 # --- SPARK CONNECTION HELPER ---
 
 def get_spark_session(app_name):
     try:
         try:
             socket.gethostbyname("spark-master")
-            master_url = "spark://spark-master:7077"
+            master_url = SPARK_MASTER
         except:
             master_url = "spark://localhost:7077"
 
@@ -35,7 +39,7 @@ def get_spark_session(app_name):
 
 # --- HBASE CONNECTION HELPER ---
 
-def get_hbase_connection(host='hbase'):
+def get_hbase_connection(host=HBASE_HOST):
     """Establishes a connection to HBase using HappyBase."""
     try:
         connection = happybase.Connection(host=host)
@@ -73,15 +77,11 @@ def load_historical_data(limit=None):
     t_24h_limit = max_ts - timedelta(hours=24)
     t_7d_limit = max_ts - timedelta(days=7)
 
-    crypto_symbols = ['BTC', 'ETH', 'SOL']
-    stock_symbols = ['SNP', 'DJI', 'NIM']
-    all_symbols = crypto_symbols + stock_symbols
-
     data_rows = []
 
     # 3. Scan History
-    for symbol in all_symbols:
-        asset_type = 'Crypto' if symbol in crypto_symbols else 'Stock'
+    for symbol in ALL_SYMBOLS:
+        asset_type = 'Crypto' if symbol in CRYPTO_SYMBOLS else 'Stock'
 
         # CONFIG:
         # If limit is set, we scan REVERSE to get the newest N rows.
@@ -96,23 +96,13 @@ def load_historical_data(limit=None):
             if len(parts) != 3: continue
 
             ts = pd.to_datetime(parts[1])
+            # Enforce Naive Timestamp (Crucial for subtraction safety)
+            if ts.tz is not None: ts = ts.tz_localize(None)
+
             gran = parts[2]
 
-            # Retention Logic: 1m for 24h, 10m for 7d, 1d for rest
-            keep = False
-            if gran == '1m' and ts > t_24h_limit:
-                keep = True
-            elif gran == '10m' and t_7d_limit < ts <= t_24h_limit:
-                keep = True
-            elif gran == '1d' and ts <= t_7d_limit:
-                keep = True
-
-            # If we are in "Testing Mode" (limit is set), we might want to relax
-            # the retention to ensure we actually see data on the chart
-            if limit:
-                keep = True
-
-            if keep:
+            # Use Helper Logic
+            if should_keep_record(ts, gran, t_24h_limit, t_7d_limit, force_keep=bool(limit)):
                 data_rows.append({
                     'Datetime': ts,
                     'Symbol': symbol,
@@ -148,22 +138,14 @@ def get_latest_ticks():
     if not conn: return pd.DataFrame()
 
     table = conn.table('prices')
-
-    crypto_symbols = ['BTC', 'ETH', 'SOL']
-    stock_symbols = ['SNP', 'DJI', 'NIM']
-    all_symbols = crypto_symbols + stock_symbols
-
-    # We use UTC date because the streaming jobs use datetime.utcfromtimestamp / strftime("%Y%m%d")
-    today_str = datetime.utcnow().strftime("%Y%m%d")
+    today_str = datetime.now().strftime("%Y%m%d")
 
     new_rows = []
 
-    for symbol in all_symbols:
-        asset_type = 'crypto' if symbol in crypto_symbols else 'stock'
+    for symbol in ALL_SYMBOLS:
+        asset_type = 'crypto' if symbol in CRYPTO_SYMBOLS else 'stock'
 
-        # === FIX: Handle USDT Suffix ===
-        # The writer (crypto_to_hbase.py) writes keys like: crypto#BTCUSDT#20250117
-        # But our app uses 'BTC'. We must append 'USDT' for the lookup.
+        # Handle USDT Suffix mismatch (Writer uses BTCUSDT, App uses BTC)
         search_symbol = f"{symbol}USDT" if asset_type == 'crypto' else symbol
 
         # KEY CONSTRUCTION: Direct lookup
@@ -192,6 +174,7 @@ def get_latest_ticks():
         try:
             ts_str = latest_col.decode().split(':', 1)[1]
             ts = pd.to_datetime(ts_str)
+            if ts.tz is not None: ts = ts.tz_localize(None)
         except Exception:
             continue
 
