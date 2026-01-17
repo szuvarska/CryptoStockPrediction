@@ -230,7 +230,7 @@ def server(input, output, session):
             resampled_crypto(),
             input.crypto_select(),
             input.time_range(),
-            show_sma=False
+            show_sma=True
         ), height="500px")
 
     # --- EDA OUTPUTS ---

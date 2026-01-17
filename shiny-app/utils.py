@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from shiny import ui
 
 def render_plotly_html(fig, height="100%"):
@@ -8,25 +9,26 @@ def render_plotly_html(fig, height="100%"):
     return ui.HTML(f'<div style="height: {height}; width: 100%;">{html}</div>')
 
 
-def should_keep_record(timestamp, granularity, t_24h_limit, t_7d_limit, force_keep=False):
+def filter_data_vectorized(df, t_24h_limit, t_7d_limit):
     """
-    Decides if a historical record should be kept based on granularity and age.
+    Applies retention policy filtering on the entire DataFrame at once using vectorized operations.
 
-    Args:
-        timestamp (pd.Timestamp): The row timestamp.
-        granularity (str): '1m', '10m', or '1d'.
-        t_24h_limit (pd.Timestamp): Cutoff for 1m data.
-        t_7d_limit (pd.Timestamp): Cutoff for 10m data.
-        force_keep (bool): If True, bypass filters (useful for testing).
+    Policy:
+    - 1m data: Keep if > 24h ago
+    - 10m data: Keep if > 7d ago AND <= 24h ago
+    - 1d data: Keep if <= 7d ago
     """
-    if force_keep:
-        return True
+    if df.empty: return df
 
-    if granularity == '1m' and timestamp > t_24h_limit:
-        return True
-    elif granularity == '10m' and t_7d_limit < timestamp <= t_24h_limit:
-        return True
-    elif granularity == '1d' and timestamp <= t_7d_limit:
-        return True
+    # Create Boolean Masks (Vectorized)
+    # 1. Minute Data
+    mask_1m = (df['Granularity'] == '1m') & (df['Datetime'] > t_24h_limit)
 
-    return False
+    # 2. Ten-Minute Data
+    mask_10m = (df['Granularity'] == '10m') & (df['Datetime'] > t_7d_limit) & (df['Datetime'] <= t_24h_limit)
+
+    # 3. Daily Data
+    mask_1d = (df['Granularity'] == '1d') & (df['Datetime'] <= t_7d_limit)
+
+    # Combine and Filter
+    return df[mask_1m | mask_10m | mask_1d].copy()

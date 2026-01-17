@@ -4,11 +4,12 @@ import numpy as np
 import socket
 from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 # --- LOCAL IMPORTS ---
 from config import HBASE_HOST, SPARK_MASTER, HIVE_METASTORE, CRYPTO_SYMBOLS, ALL_SYMBOLS
-from utils import should_keep_record
+from utils import filter_data_vectorized
 
 # --- SPARK CONNECTION HELPER ---
 
@@ -27,7 +28,7 @@ def get_spark_session(app_name):
             .config("spark.cores.max", "1")
             .config("spark.executor.cores", "1")
             .enableHiveSupport()
-            .config("hive.metastore.uris", "thrift://hive-metastore:9083")
+            # .config("hive.metastore.uris", "thrift://hive-metastore:9083")
             .getOrCreate()
         )
         spark.sparkContext.setLogLevel("ERROR")
@@ -51,60 +52,35 @@ def get_hbase_connection(host=HBASE_HOST):
 
 
 # --- PART 1: HEAVY HISTORY LOAD (Run Once) ---
-def load_historical_data(limit=None):
-    """
-    Fetches historical aggregates (1m, 10m, 1d) from 'crypto_index_aggregates'.
 
-    Args:
-        limit (int, optional): If set, fetches only the last N rows per symbol.
-                               Crucial for fast testing.
+def fetch_single_symbol_history(symbol, limit, asset_type):
+    """
+    Worker function to fetch history for a single symbol.
+    Runs in its own thread with its own HBase connection.
     """
     conn = get_hbase_connection()
-    if not conn: return pd.DataFrame()
+    if not conn: return []
 
     table = conn.table('crypto_index_aggregates')
+    rows_data = []
 
-    # 1. Find Max Timestamp (Scan reverse limit 5)
-    latest_rows = list(table.scan(limit=5, reverse=True))
-    if not latest_rows:
-        conn.close()
-        return pd.DataFrame()
-
-    max_ts_str = latest_rows[0][0].decode().split('#')[1]
-    max_ts = pd.to_datetime(max_ts_str)
-
-    # 2. Define Boundaries
-    t_24h_limit = max_ts - timedelta(hours=24)
-    t_7d_limit = max_ts - timedelta(days=7)
-
-    data_rows = []
-
-    # 3. Scan History
-    for symbol in ALL_SYMBOLS:
-        asset_type = 'Crypto' if symbol in CRYPTO_SYMBOLS else 'Stock'
-
-        # CONFIG:
-        # If limit is set, we scan REVERSE to get the newest N rows.
+    try:
         scan_kwargs = {'row_prefix': f"{symbol}#".encode()}
-
         if limit:
             scan_kwargs['limit'] = limit
             scan_kwargs['reverse'] = True
 
         for key, value in table.scan(**scan_kwargs):
-            parts = key.decode().split('#')
-            if len(parts) != 3: continue
+            try:
+                # Fast manual parsing
+                key_str = key.decode()
+                parts = key_str.split('#')
+                if len(parts) != 3: continue
 
-            ts = pd.to_datetime(parts[1])
-            # Enforce Naive Timestamp (Crucial for subtraction safety)
-            if ts.tz is not None: ts = ts.tz_localize(None)
-
-            gran = parts[2]
-
-            # Use Helper Logic
-            if should_keep_record(ts, gran, t_24h_limit, t_7d_limit, force_keep=bool(limit)):
-                data_rows.append({
-                    'Datetime': ts,
+                # Store raw strings/floats to minimize processing in-thread
+                rows_data.append({
+                    'Datetime': parts[1],  # Parsed later in bulk
+                    'Granularity': parts[2],
                     'Symbol': symbol,
                     'Type': asset_type,
                     'CurrentPrice': float(value.get(b'ohlc:close', 0)),
@@ -115,13 +91,71 @@ def load_historical_data(limit=None):
                     'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', np.nan)),
                     'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
                 })
+            except Exception:
+                continue
+    finally:
+        conn.close()
 
-    conn.close()
-    if not data_rows: return pd.DataFrame()
+    return rows_data
 
-    df = pd.DataFrame(data_rows).sort_values(['Symbol', 'Datetime'])
 
-    # Fill MAs for continuity
+def load_historical_data(limit=None):
+    """
+    Loads history using Parallel Threads (IO-bound optimization).
+    """
+    # 1. Determine Global Time Boundaries (Single cheap lookup)
+    conn = get_hbase_connection()
+    if not conn: return pd.DataFrame()
+
+    try:
+        table = conn.table('crypto_index_aggregates')
+        latest_rows = list(table.scan(limit=5, reverse=True))
+        if not latest_rows: return pd.DataFrame()
+
+        max_ts_str = latest_rows[0][0].decode().split('#')[1]
+        max_ts = pd.to_datetime(max_ts_str)
+        t_24h_limit = max_ts - timedelta(hours=24)
+        t_7d_limit = max_ts - timedelta(days=7)
+    finally:
+        conn.close()
+
+    all_raw_rows = []
+
+    # 2. Parallel Execution
+    # Spin up one thread per symbol (e.g., 6 threads) to fetch data concurrently
+    with ThreadPoolExecutor(max_workers=len(ALL_SYMBOLS)) as executor:
+        future_to_symbol = {}
+        for symbol in ALL_SYMBOLS:
+            asset_type = 'Crypto' if symbol in CRYPTO_SYMBOLS else 'Stock'
+            future = executor.submit(fetch_single_symbol_history, symbol, limit, asset_type)
+            future_to_symbol[future] = symbol
+
+        for future in as_completed(future_to_symbol):
+            try:
+                data = future.result()
+                all_raw_rows.extend(data)
+            except Exception as e:
+                print(f"Error fetching {future_to_symbol[future]}: {e}")
+
+    # 3. Post-Processing (Vectorized)
+    if not all_raw_rows: return pd.DataFrame()
+
+    df = pd.DataFrame(all_raw_rows)
+
+    # Bulk Datetime Conversion
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+    if df['Datetime'].dt.tz is not None:
+        df['Datetime'] = df['Datetime'].dt.tz_localize(None)
+
+    # Vectorized Filter (skip if limit is set for testing)
+    if not limit:
+        df = filter_data_vectorized(df, t_24h_limit, t_7d_limit)
+
+    # Cleanup
+    if 'Granularity' in df.columns:
+        df = df.drop(columns=['Granularity'])
+
+    df = df.sort_values(['Symbol', 'Datetime'])
     df['FiftyDayAveragePrice'] = df.groupby('Symbol')['FiftyDayAveragePrice'].ffill().bfill()
     df['TwoHundredDaysAveragePrice'] = df.groupby('Symbol')['TwoHundredDaysAveragePrice'].ffill().bfill()
 
@@ -129,10 +163,10 @@ def load_historical_data(limit=None):
 
 
 # --- PART 2: LIGHTWEIGHT REAL-TIME POLL (Run Frequently) ---
+
 def get_latest_ticks():
     """
-    Fetches ONLY the current instantaneous price from the 'prices' table.
-    Uses direct RowKey lookups (O(1)) instead of Scans for minimal latency.
+    Fetches latest ticks using Batch Lookup (Latency optimization).
     """
     conn = get_hbase_connection()
     if not conn: return pd.DataFrame()
@@ -140,64 +174,56 @@ def get_latest_ticks():
     table = conn.table('prices')
     today_str = datetime.now().strftime("%Y%m%d")
 
-    new_rows = []
+    # 1. Pre-calculate all keys
+    keys_map = {}  # Map row_key -> (symbol, asset_type)
+    keys_list = []
 
     for symbol in ALL_SYMBOLS:
         asset_type = 'crypto' if symbol in CRYPTO_SYMBOLS else 'stock'
-
-        # Handle USDT Suffix mismatch (Writer uses BTCUSDT, App uses BTC)
         search_symbol = f"{symbol}USDT" if asset_type == 'crypto' else symbol
-
-        # KEY CONSTRUCTION: Direct lookup
         row_key = f"{asset_type}#{search_symbol}#{today_str}".encode()
 
-        try:
-            row = table.row(row_key)
-        except Exception:
-            continue
+        keys_list.append(row_key)
+        keys_map[row_key] = (symbol, asset_type)
 
-        if not row: continue
+    # 2. Batch Fetch (Single Network Round-Trip)
+    rows = table.rows(keys_list)
 
-        # The columns are timestamps (e.g., prices:2025-01-01T12:00:00)
-        # They are sorted lexicographically, so the last key is the latest time.
-        sorted_cols = sorted(row.keys())
+    new_rows_data = []
+
+    # 3. Process Batch Results
+    for row_key, data in rows:
+        symbol, raw_asset_type = keys_map.get(row_key)
+
+        # Sort columns to find latest tick
+        sorted_cols = sorted(data.keys())
         if not sorted_cols: continue
 
         latest_col = sorted_cols[-1]
         try:
-            latest_val = float(row[latest_col])
-        except (ValueError, TypeError):
-            continue
+            latest_val = float(data[latest_col])
 
-        # Parse timestamp from column name 'prices:2025...'
-        # Column format is usually 'prices:iso_timestamp'
-        try:
             ts_str = latest_col.decode().split(':', 1)[1]
             ts = pd.to_datetime(ts_str)
             if ts.tz is not None: ts = ts.tz_localize(None)
+
+            new_rows_data.append({
+                'Datetime': ts,
+                'Symbol': symbol,
+                'Type': 'Crypto' if raw_asset_type == 'crypto' else 'Stock',
+                'CurrentPrice': latest_val,
+                'OpeningPrice': latest_val,
+                'HighestDayPrice': latest_val,
+                'LowestDayPrice': latest_val,
+                'FiftyDayAveragePrice': np.nan,
+                'TwoHundredDaysAveragePrice': np.nan,
+                'VolumeTraded': 0
+            })
         except Exception:
             continue
 
-        # Create a row compatible with the history dataframe
-        # Note: We save it as 'symbol' (BTC) not 'search_symbol' (BTCUSDT)
-        # so it aligns with the historical data.
-        new_rows.append({
-            'Datetime': ts,
-            'Symbol': symbol,
-            'Type': 'Crypto' if asset_type == 'crypto' else 'Stock',
-            'CurrentPrice': latest_val,
-            # For a single tick, Open/High/Low are effectively the current price
-            'OpeningPrice': latest_val,
-            'HighestDayPrice': latest_val,
-            'LowestDayPrice': latest_val,
-            # Leave MAs NaN, they will be filled by ffill in the app
-            'FiftyDayAveragePrice': np.nan,
-            'TwoHundredDaysAveragePrice': np.nan,
-            'VolumeTraded': 0
-        })
-
     conn.close()
-    return pd.DataFrame(new_rows)
+    return pd.DataFrame(new_rows_data)
 
 def load_forex_data() -> pd.DataFrame:
     spark = get_spark_session("LoadForex")
