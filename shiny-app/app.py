@@ -4,9 +4,12 @@ from shiny import App, ui, reactive, render
 from faicons import icon_svg
 from pathlib import Path
 import os
+import asyncio
+import traceback
+from datetime import datetime
 
 # --- Local Imports (Refactored Modules) ---
-from data_loader import load_unified_data, load_forex_data, load_spark_model
+from data_loader import load_unified_data, load_forex_data, load_spark_model, load_historical_data, get_latest_ticks
 from plots.eda_plots import (
     plot_correlation_matrix,
     plot_return_distribution,
@@ -29,7 +32,7 @@ app_ui = ui.page_sidebar(
     ui.sidebar(
         # Only show filters if NOT on Monitoring or Raw Data tabs
         ui.panel_conditional(
-            "input.tabs != 'Monitoring' && input.tabs != 'Raw Data' && input.tabs != 'Testy Michała'",
+            "input.tabs != 'Monitoring' && input.tabs != 'Testy Michała'",
             ui.h4("Filters", class_="sidebar-title"),
             ui.input_select(
                 "crypto_select", "Asset:",
@@ -169,17 +172,81 @@ ui.navset_card_tab(
 
 # --- 5. SERVER ---
 def server(input, output, session):
-    # Reactive Values for Data
-    data_store = reactive.Value({})
 
     # 1. CENTRALIZED DATA LOADING
+    data_store = reactive.Value({
+        "crypto": pd.DataFrame(),
+        "forex": pd.DataFrame()
+    })
+
+    # SAFETY FLAG: Prevents real-time updates from running before history is loaded
+    is_initialized = reactive.Value(False)
+
     @reactive.Effect
-    def _load_data():
-        # Using a dictionary to store all datasets cleanly
+    async def _init_load():
+        print("Starting heavy historical data load (background)...")
+
+        loop = asyncio.get_event_loop()
+
+        # Run in separate thread using executor (Compatible with Python < 3.9)
+        history_df = await loop.run_in_executor(None, load_historical_data)
+        forex_df = await loop.run_in_executor(None, load_forex_data)
+
+        # Update store and set flag
         data_store.set({
-            "crypto": load_unified_data(),
-            "forex": load_forex_data()
+            "crypto": history_df,
+            "forex": forex_df
         })
+        is_initialized.set(True)
+        print("Historical data load complete. Real-time updates enabled.")
+
+    # 2. REAL-TIME TICKER
+    @reactive.Effect
+    def _update_prices():
+
+        # Check initialization
+        if not is_initialized.get():
+            return
+
+        reactive.invalidate_later(120000)
+
+        # WRAP IN TRY-EXCEPT TO PREVENT CRASHING
+        with reactive.isolate():
+
+            try:
+                now = datetime.now().strftime("%H:%M:%S")
+                print(f"[{now}] DEBUG: _update_prices triggered")
+
+                current_data = data_store.get()
+                main_df = current_data.get("crypto")
+
+                if main_df is None:
+                    return
+
+                # Fetch latest ticks
+                new_ticks = get_latest_ticks()
+
+                if not new_ticks.empty:
+
+                    # Ensure types align before concat if necessary, but usually pandas handles it
+                    # Debugging column mismatch if any
+
+                    updated_df = pd.concat([main_df, new_ticks], ignore_index=True, sort=False)
+
+                    updated_df = updated_df.drop_duplicates(subset=['Symbol', 'Datetime'], keep='last')
+
+                    updated_df['FiftyDayAveragePrice'] = updated_df.groupby('Symbol')['FiftyDayAveragePrice'].ffill()
+                    updated_df['TwoHundredDaysAveragePrice'] = updated_df.groupby('Symbol')[
+                        'TwoHundredDaysAveragePrice'].ffill()
+
+                    data_store.set({
+                        "crypto": updated_df,
+                        "forex": current_data.get("forex")
+                    })
+
+            except Exception as e:
+                print(f"Error Message: {e}")
+                traceback.print_exc()
 
     # --- HELPER: GENERIC TIME FILTER ---
     def filter_by_time(df, time_range, date_col='Datetime'):
@@ -223,7 +290,7 @@ def server(input, output, session):
         data = data_store.get()
         return data.get("forex")
 
-    # Resampled Logic for Candlesticks
+    #Resampled Logic for Candlesticks
     @reactive.Calc
     def resampled_crypto():
         df = filtered_crypto_specific()
@@ -312,7 +379,13 @@ def server(input, output, session):
 
     @render.ui
     def candle_chart_view():
-        return render_plotly_html(plot_candlestick(resampled_crypto(), input.crypto_select(), input.time_range()), height="500px")
+        return render_plotly_html(plot_candlestick(
+            # filtered_crypto_specific(),
+            resampled_crypto(),
+            input.crypto_select(),
+            input.time_range(),
+            show_sma=False
+        ), height="500px")
 
     # --- EDA OUTPUTS ---
     @render.ui

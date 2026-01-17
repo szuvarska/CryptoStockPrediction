@@ -2,7 +2,6 @@ import pandas as pd
 import happybase
 import numpy as np
 import socket
-from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
 from datetime import datetime, timedelta
@@ -131,6 +130,176 @@ def load_unified_data():
 
     return df
 
+
+# --- PART 1: HEAVY HISTORY LOAD (Run Once) ---
+def load_historical_data(limit=None):
+    """
+    Fetches historical aggregates (1m, 10m, 1d) from 'crypto_index_aggregates'.
+
+    Args:
+        limit (int, optional): If set, fetches only the last N rows per symbol.
+                               Crucial for fast testing.
+    """
+    conn = get_hbase_connection()
+    if not conn: return pd.DataFrame()
+
+    table = conn.table('crypto_index_aggregates')
+
+    # 1. Find Max Timestamp (Scan reverse limit 5)
+    latest_rows = list(table.scan(limit=5, reverse=True))
+    if not latest_rows:
+        conn.close()
+        return pd.DataFrame()
+
+    max_ts_str = latest_rows[0][0].decode().split('#')[1]
+    max_ts = pd.to_datetime(max_ts_str)
+
+    # 2. Define Boundaries
+    t_24h_limit = max_ts - timedelta(hours=24)
+    t_7d_limit = max_ts - timedelta(days=7)
+
+    crypto_symbols = ['BTC', 'ETH', 'SOL']
+    stock_symbols = ['SNP', 'DJI', 'NIM']
+    all_symbols = crypto_symbols + stock_symbols
+
+    data_rows = []
+
+    # 3. Scan History
+    for symbol in all_symbols:
+        asset_type = 'Crypto' if symbol in crypto_symbols else 'Stock'
+
+        # CONFIG:
+        # If limit is set, we scan REVERSE to get the newest N rows.
+        scan_kwargs = {'row_prefix': f"{symbol}#".encode()}
+
+        if limit:
+            scan_kwargs['limit'] = limit
+            scan_kwargs['reverse'] = True
+
+        for key, value in table.scan(**scan_kwargs):
+            parts = key.decode().split('#')
+            if len(parts) != 3: continue
+
+            ts = pd.to_datetime(parts[1])
+            gran = parts[2]
+
+            # Retention Logic: 1m for 24h, 10m for 7d, 1d for rest
+            keep = False
+            if gran == '1m' and ts > t_24h_limit:
+                keep = True
+            elif gran == '10m' and t_7d_limit < ts <= t_24h_limit:
+                keep = True
+            elif gran == '1d' and ts <= t_7d_limit:
+                keep = True
+
+            # If we are in "Testing Mode" (limit is set), we might want to relax
+            # the retention to ensure we actually see data on the chart
+            if limit:
+                keep = True
+
+            if keep:
+                data_rows.append({
+                    'Datetime': ts,
+                    'Symbol': symbol,
+                    'Type': asset_type,
+                    'CurrentPrice': float(value.get(b'ohlc:close', 0)),
+                    'OpeningPrice': float(value.get(b'ohlc:open', 0)),
+                    'HighestDayPrice': float(value.get(b'ohlc:high', 0)),
+                    'LowestDayPrice': float(value.get(b'ohlc:low', 0)),
+                    'FiftyDayAveragePrice': float(value.get(b'indicators:ma_50_price', np.nan)),
+                    'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', np.nan)),
+                    'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
+                })
+
+    conn.close()
+    if not data_rows: return pd.DataFrame()
+
+    df = pd.DataFrame(data_rows).sort_values(['Symbol', 'Datetime'])
+
+    # Fill MAs for continuity
+    df['FiftyDayAveragePrice'] = df.groupby('Symbol')['FiftyDayAveragePrice'].ffill().bfill()
+    df['TwoHundredDaysAveragePrice'] = df.groupby('Symbol')['TwoHundredDaysAveragePrice'].ffill().bfill()
+
+    return df
+
+
+# --- PART 2: LIGHTWEIGHT REAL-TIME POLL (Run Frequently) ---
+def get_latest_ticks():
+    """
+    Fetches ONLY the current instantaneous price from the 'prices' table.
+    Uses direct RowKey lookups (O(1)) instead of Scans for minimal latency.
+    """
+    conn = get_hbase_connection()
+    if not conn: return pd.DataFrame()
+
+    table = conn.table('prices')
+
+    crypto_symbols = ['BTC', 'ETH', 'SOL']
+    stock_symbols = ['SNP', 'DJI', 'NIM']
+    all_symbols = crypto_symbols + stock_symbols
+
+    # We use UTC date because the streaming jobs use datetime.utcfromtimestamp / strftime("%Y%m%d")
+    today_str = datetime.utcnow().strftime("%Y%m%d")
+
+    new_rows = []
+
+    for symbol in all_symbols:
+        asset_type = 'crypto' if symbol in crypto_symbols else 'stock'
+
+        # === FIX: Handle USDT Suffix ===
+        # The writer (crypto_to_hbase.py) writes keys like: crypto#BTCUSDT#20250117
+        # But our app uses 'BTC'. We must append 'USDT' for the lookup.
+        search_symbol = f"{symbol}USDT" if asset_type == 'crypto' else symbol
+
+        # KEY CONSTRUCTION: Direct lookup
+        row_key = f"{asset_type}#{search_symbol}#{today_str}".encode()
+
+        try:
+            row = table.row(row_key)
+        except Exception:
+            continue
+
+        if not row: continue
+
+        # The columns are timestamps (e.g., prices:2025-01-01T12:00:00)
+        # They are sorted lexicographically, so the last key is the latest time.
+        sorted_cols = sorted(row.keys())
+        if not sorted_cols: continue
+
+        latest_col = sorted_cols[-1]
+        try:
+            latest_val = float(row[latest_col])
+        except (ValueError, TypeError):
+            continue
+
+        # Parse timestamp from column name 'prices:2025...'
+        # Column format is usually 'prices:iso_timestamp'
+        try:
+            ts_str = latest_col.decode().split(':', 1)[1]
+            ts = pd.to_datetime(ts_str)
+        except Exception:
+            continue
+
+        # Create a row compatible with the history dataframe
+        # Note: We save it as 'symbol' (BTC) not 'search_symbol' (BTCUSDT)
+        # so it aligns with the historical data.
+        new_rows.append({
+            'Datetime': ts,
+            'Symbol': symbol,
+            'Type': 'Crypto' if asset_type == 'crypto' else 'Stock',
+            'CurrentPrice': latest_val,
+            # For a single tick, Open/High/Low are effectively the current price
+            'OpeningPrice': latest_val,
+            'HighestDayPrice': latest_val,
+            'LowestDayPrice': latest_val,
+            # Leave MAs NaN, they will be filled by ffill in the app
+            'FiftyDayAveragePrice': np.nan,
+            'TwoHundredDaysAveragePrice': np.nan,
+            'VolumeTraded': 0
+        })
+
+    conn.close()
+    return pd.DataFrame(new_rows)
 
 def load_forex_data() -> pd.DataFrame:
     spark = get_spark_session("LoadForex")

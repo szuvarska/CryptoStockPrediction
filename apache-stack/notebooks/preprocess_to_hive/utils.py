@@ -28,13 +28,14 @@ def find_new_paths(spark, base_path, meta_path):
     all_dirs = list_hdfs_dirs(spark, base_path)
     if last_path:
         new_dirs = [d for d in all_dirs if d > last_path]
+        print(f"Last date: {last_path}")
     else:
         new_dirs = all_dirs  # pierwsze uruchomienie
         
     # Remove today -> not finished
     now = str(date.today())
     if now in new_dirs:
-        print(f"Removing {now} from dirs")
+        print(f"Removing {now} from dirs - day has not finished yet")
         new_dirs.remove(str(now))
     
     if not new_dirs:

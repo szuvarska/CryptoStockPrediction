@@ -49,7 +49,7 @@ def plot_price_trend(df):
     return fig
 
 
-def plot_candlestick(df, symbol, time_range_label=""):
+def plot_candlestick(df, symbol, time_range_label="", show_sma=True):
     if df is None or df.empty:
         return _empty_plot("Not enough data for candlesticks")
 
@@ -68,10 +68,14 @@ def plot_candlestick(df, symbol, time_range_label=""):
         hoverinfo="x+text"
     )])
 
-    fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA7'], mode='lines', name=f'SMA 7',
-                             line=dict(color='purple', width=1.5)))
-    fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA30'], mode='lines', name=f'SMA 30',
-                             line=dict(color='blue', width=1.5)))
+    # Only add SMAs if requested AND they exist in the dataframe
+    if show_sma:
+        if 'SMA7' in df.columns:
+            fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA7'], mode='lines', name=f'SMA 7',
+                                     line=dict(color='purple', width=1.5)))
+        if 'SMA30' in df.columns:
+            fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA30'], mode='lines', name=f'SMA 30',
+                                     line=dict(color='blue', width=1.5)))
 
     # Layout
     fig.update_layout(
