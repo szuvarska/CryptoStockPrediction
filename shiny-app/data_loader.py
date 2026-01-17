@@ -89,6 +89,8 @@ def fetch_single_symbol_history(symbol, limit, asset_type):
                     'LowestDayPrice': float(value.get(b'ohlc:low', 0)),
                     'FiftyDayAveragePrice': float(value.get(b'indicators:ma_50_price', np.nan)),
                     'TwoHundredDaysAveragePrice': float(value.get(b'indicators:ma_200_price', np.nan)),
+                    'SMA7': float(value.get(b'indicators:SMA_7', np.nan)),
+                    'SMA30': float(value.get(b'indicators:SMA_30', np.nan)),
                     'VolumeTraded': float(value.get(b'ohlc:max_volume', 0))
                 })
             except Exception:
@@ -156,9 +158,108 @@ def load_historical_data(limit=None):
         df = df.drop(columns=['Granularity'])
 
     df = df.sort_values(['Symbol', 'Datetime'])
-    df['FiftyDayAveragePrice'] = df.groupby('Symbol')['FiftyDayAveragePrice'].ffill().bfill()
-    df['TwoHundredDaysAveragePrice'] = df.groupby('Symbol')['TwoHundredDaysAveragePrice'].ffill().bfill()
+    # Fill missing indicators (Forward fill, then Backward fill)
+    for col in ['FiftyDayAveragePrice', 'TwoHundredDaysAveragePrice', 'SMA7', 'SMA30']:
+        if col in df.columns:
+            df[col] = df.groupby('Symbol')[col].ffill().bfill()
 
+    return df
+
+
+def load_recent_prices_data():
+    """
+    Loads raw tick data (prices & predictions) for Today and Yesterday.
+    This provides high-resolution data for the 'Last 24H' view on startup
+    without scanning the entire history.
+    """
+    conn = get_hbase_connection()
+    if not conn: return pd.DataFrame()
+
+    table = conn.table('prices')
+
+    # 1. Generate Keys for Today
+    today = datetime.now().strftime("%Y%m%d")
+
+    keys_list = []
+    meta_map = {}  # key -> (symbol, asset_type)
+
+    for symbol in ALL_SYMBOLS:
+        # Determine strict HBase row key format
+        if symbol in CRYPTO_SYMBOLS:
+            h_type = 'crypto'
+            h_symbol = f"{symbol}USDT"
+            out_type = 'Crypto'
+        else:
+            h_type = 'stock'
+            h_symbol = symbol
+            out_type = 'Stock'
+
+        row_key = f"{h_type}#{h_symbol}#{today}".encode()
+        keys_list.append(row_key)
+        meta_map[row_key] = (symbol, out_type)
+
+    # 2. Batch Fetch (Very Fast)
+    found_rows = table.rows(keys_list)
+    rows_data = []
+
+    # 3. Parse Data
+    for key, data in found_rows:
+        if key not in meta_map: continue
+        symbol, asset_type = meta_map[key]
+
+        # Group columns by timestamp to align Price and Prediction
+        # Structure: {'2025-01-17T12:00:00': {'price': X, 'pred': Y}}
+        grouped_ticks = {}
+
+        for col_bytes, val_bytes in data.items():
+            col_str = col_bytes.decode()
+            try:
+                if col_str.startswith('prices:'):
+                    ts_part = col_str.split(':', 1)[1]
+                    if ts_part not in grouped_ticks: grouped_ticks[ts_part] = {}
+                    grouped_ticks[ts_part]['price'] = float(val_bytes)
+
+                elif col_str.startswith('predictions:'):
+                    ts_part = col_str.split(':', 1)[1]
+                    if ts_part not in grouped_ticks: grouped_ticks[ts_part] = {}
+                    grouped_ticks[ts_part]['pred'] = float(val_bytes)
+            except:
+                continue
+
+        # Convert groups to rows
+        for ts_str, vals in grouped_ticks.items():
+            if 'price' not in vals: continue
+
+            try:
+                ts = pd.to_datetime(ts_str)
+                # Correction: Ensure timestamp is timezone-naive for compatibility
+                if ts.tz is not None: ts = ts.tz_localize(None)
+            except:
+                continue
+
+            rows_data.append({
+                'Datetime': ts,
+                'Symbol': symbol,
+                'Type': asset_type,
+                'CurrentPrice': vals['price'],
+                'PredictedPrice': vals.get('pred', np.nan),
+                # Fill OHLC approx for raw ticks
+                'OpeningPrice': vals['price'],
+                'HighestDayPrice': vals['price'],
+                'LowestDayPrice': vals['price'],
+                'FiftyDayAveragePrice': np.nan,
+                'TwoHundredDaysAveragePrice': np.nan,
+                'SMA7': np.nan,
+                'SMA30': np.nan,
+                'VolumeTraded': 0
+            })
+
+    conn.close()
+
+    if not rows_data: return pd.DataFrame()
+
+    df = pd.DataFrame(rows_data)
+    df = df.sort_values(['Symbol', 'Datetime'])
     return df
 
 
@@ -207,16 +308,23 @@ def get_latest_ticks():
             ts = pd.to_datetime(ts_str)
             if ts.tz is not None: ts = ts.tz_localize(None)
 
+            # Fetch Prediction if available for this timestamp
+            pred_key = f"predictions:{ts_str}".encode()
+            predicted_val = float(data[pred_key]) if pred_key in data else np.nan
+
             new_rows_data.append({
                 'Datetime': ts,
                 'Symbol': symbol,
                 'Type': 'Crypto' if raw_asset_type == 'crypto' else 'Stock',
                 'CurrentPrice': latest_val,
+                'PredictedPrice': predicted_val,
                 'OpeningPrice': latest_val,
                 'HighestDayPrice': latest_val,
                 'LowestDayPrice': latest_val,
                 'FiftyDayAveragePrice': np.nan,
                 'TwoHundredDaysAveragePrice': np.nan,
+                'SMA7': np.nan,
+                'SMA30': np.nan,
                 'VolumeTraded': 0
             })
         except Exception:

@@ -4,9 +4,10 @@ import asyncio
 import traceback
 from datetime import datetime
 from shiny import ui, reactive, render
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error
 
 # --- Local Imports ---
-from data_loader import load_historical_data, get_latest_ticks, load_forex_data, load_spark_model
+from data_loader import load_historical_data, load_recent_prices_data, get_latest_ticks, load_forex_data, load_spark_model
 from plots.eda_plots import (
     plot_correlation_matrix,
     plot_return_distribution,
@@ -38,9 +39,30 @@ def server(input, output, session):
 
         loop = asyncio.get_event_loop()
 
-        # Run in separate thread using executor (Compatible with Python < 3.9)
+        # 1. Load Long-Term History (Aggregates)
         history_df = await loop.run_in_executor(None, load_historical_data)
+
+        # 2. Load Recent "Last Day" Raw Ticks (Prices + Predictions)
+        print("Loading recent raw ticks (last 48h)...")
+        recent_df = await loop.run_in_executor(None, load_recent_prices_data)
+
+        # 3. Load Forex
         forex_df = await loop.run_in_executor(None, load_forex_data)
+
+        # 4. Merge Data
+        full_crypto = pd.concat([history_df, recent_df], ignore_index=True)
+
+        if not full_crypto.empty:
+            full_crypto = full_crypto.sort_values(['Symbol', 'Datetime'])
+
+            # Deduplicate: overlapping timestamps (if any) favour the 'recent_df'
+            # because it contains the 'PredictedPrice' column
+            full_crypto = full_crypto.drop_duplicates(subset=['Symbol', 'Datetime'], keep='last')
+
+            # Fill missing moving averages in the raw data by forward filling from history
+            full_crypto['FiftyDayAveragePrice'] = full_crypto.groupby('Symbol')['FiftyDayAveragePrice'].ffill()
+            full_crypto['TwoHundredDaysAveragePrice'] = full_crypto.groupby('Symbol')[
+                'TwoHundredDaysAveragePrice'].ffill()
 
         # Update store and set flag
         data_store.set({
@@ -139,27 +161,6 @@ def server(input, output, session):
         data = data_store.get()
         return data.get("forex")
 
-    #Resampled Logic for Candlesticks
-    @reactive.Calc
-    def resampled_crypto():
-        df = filtered_crypto_specific()
-        if df.empty: return df
-
-        # Dynamic Frequency
-        freq_map = {"1H": "1min", "24H": "15min", "7D": "1H", "30D": "4H", "ALL": "1D"}
-        freq = freq_map.get(input.time_range(), "4H")
-
-        df_res = df.set_index("Datetime").resample(freq).agg({
-            "OpeningPrice": "first", "HighestDayPrice": "max",
-            "LowestDayPrice": "min", "CurrentPrice": "last"
-        }).dropna().reset_index()
-
-        # Add SMAs
-        df_res['SMA7'] = df_res['CurrentPrice'].rolling(7).mean()
-        df_res['SMA30'] = df_res['CurrentPrice'].rolling(30).mean()
-
-        return df_res
-
     @reactive.Calc
     def raw_data():
         source = input.source_select()
@@ -229,8 +230,7 @@ def server(input, output, session):
     @render.ui
     def candle_chart_view():
         return render_plotly_html(plot_candlestick(
-            # filtered_crypto_specific(),
-            resampled_crypto(),
+            filtered_crypto_specific(),
             input.crypto_select(),
             input.time_range(),
             show_sma=True
@@ -254,35 +254,83 @@ def server(input, output, session):
     def forex_chart_view():
         return render_plotly_html(plot_forex_volume(filtered_forex()))
 
-    # --- MODEL MOCKUPS (Simplified for brevity) ---
+    # --- MODEL EVALUATION (REAL DATA) ---
+    @reactive.Calc
+    def get_eval_data():
+        """
+        Prepares real data for evaluation plots and metrics.
+        Filters for rows where we actually have a prediction.
+        """
+        df = filtered_crypto_specific()
+        if df is None or df.empty: return pd.DataFrame()
+
+        # We need both Actual (CurrentPrice) and Predicted (PredictedPrice)
+        if 'PredictedPrice' not in df.columns:
+            return pd.DataFrame()
+
+        # Create a clean subset with no NaNs in Prediction or Price
+        eval_df = df[['Datetime', 'CurrentPrice', 'PredictedPrice']].copy()
+        eval_df = eval_df.dropna(subset=['CurrentPrice', 'PredictedPrice'])
+
+        if eval_df.empty:
+            return pd.DataFrame()
+
+        # Rename for compatibility with plot functions
+        eval_df = eval_df.rename(columns={
+            'CurrentPrice': 'Actual',
+            'PredictedPrice': 'Predicted'
+        })
+
+        # Calculate Residuals (Actual - Predicted)
+        eval_df['Residual'] = eval_df['Actual'] - eval_df['Predicted']
+
+        return eval_df
+
     @render.ui
     def eval_rmse():
-        # df = mock_eval_data()
-        # if df.empty: return "-"
-        # rmse = np.sqrt(((df['Actual'] - df['Predicted']) ** 2).mean())
-        # return ui.div(f"${rmse:,.2f}", class_="metric-value", style="color:#ef553b")
-        return "$142.50"
+        df = get_eval_data()
+        if df.empty: return "-"
+
+        rmse = np.sqrt(mean_squared_error(df['Actual'], df['Predicted']))
+        return ui.div(f"${rmse:,.2f}", class_="metric-value")
 
     @render.ui
     def eval_mape():
-        # df = mock_eval_data()
-        # if df.empty: return "-"
-        # mape = (abs((df['Actual'] - df['Predicted']) / df['Actual']).mean()) * 100
-        # return ui.div(f"{mape:.2f}%", class_="metric-value", style="color:#ffa500")
-        return "2.14%"
+        df = get_eval_data()
+        if df.empty: return "-"
+
+        mape = mean_absolute_percentage_error(df['Actual'], df['Predicted']) * 100
+        return ui.div(f"{mape:.2f}%", class_="metric-value")
 
     @render.ui
     def eval_dir():
-        # # Directional Accuracy (Did we predict the sign of change correctly?)
-        # df = mock_eval_data()
-        # if df.empty: return "-"
-        # # Simple mockup: 65% accuracy
-        # return ui.div("65.2%", class_="metric-value", style="color:#00cc96")
-        return "65.2%"
+        """
+        Calculates Directional Accuracy:
+        Did the model correctly predict the direction of the price movement?
+        """
+        df = get_eval_data()
+        if df.empty or len(df) < 2: return "-"
+
+        # Calculate step-by-step changes
+        # Note: We compare Previous Actual to Current Actual vs Previous Actual to Current Predicted
+        prev_actual = df['Actual'].shift(1)
+
+        actual_change = df['Actual'] - prev_actual
+        predicted_change = df['Predicted'] - prev_actual
+
+        # Check if signs match (ignoring the first row which is NaN)
+        correct_direction = np.sign(actual_change) == np.sign(predicted_change)
+        accuracy = correct_direction.mean() * 100
+
+        return ui.div(f"{accuracy:.1f}%", class_="metric-value")
 
     @render.ui
     def eval_r2():
-        return "0.89"
+        df = get_eval_data()
+        if df.empty or len(df) < 2: return "-"
+
+        r2 = r2_score(df['Actual'], df['Predicted'])
+        return ui.div(f"{r2:.3f}", class_="metric-value")
 
     @reactive.Calc
     def mock_eval_data():
@@ -301,11 +349,13 @@ def server(input, output, session):
 
     @render.ui
     def eval_pred_chart():
-        return render_plotly_html(plot_actual_vs_predicted(mock_eval_data()), height="300px")
+        # Uses the real evaluation data
+        return render_plotly_html(plot_actual_vs_predicted(get_eval_data()), height="300px")
 
     @render.ui
     def eval_resid_chart():
-        return render_plotly_html(plot_residuals(mock_eval_data()), height="300px")
+        # Uses the real evaluation data
+        return render_plotly_html(plot_residuals(get_eval_data()), height="300px")
 
     # --- MONITORING & FOOTER ---
     @reactive.Calc
@@ -435,8 +485,8 @@ def server(input, output, session):
         if last_price is not None:
             change_pct = (current_price - last_price) / last_price
 
-            # Threshold: 2%
-            if abs(change_pct) >= 0.02:
+            # Threshold: 0.2%
+            if abs(change_pct) >= 0.0004:
                 # Determine Direction and Color
                 if change_pct > 0:
                     direction = "SURGE 🚀"

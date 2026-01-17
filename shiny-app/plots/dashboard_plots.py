@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
 from plots.helper_plots import _empty_plot
 
 
@@ -32,8 +33,75 @@ def plot_price_trend(df):
             color=df['Color'],  # Array of colors
             opacity=0.8
         ),
-        name="Price"
+        name="Price",
+        hovertemplate="$%{y:,.2f}<extra></extra>"
     ))
+
+    if 'PredictedPrice' in df.columns:
+        valid_preds = df['PredictedPrice'].dropna()
+
+        if not valid_preds.empty:
+            # 1. Get Key Values
+            pred_price = valid_preds.iloc[-1]
+            last_price = df['CurrentPrice'].iloc[-1]
+            last_ts = df['Datetime'].max()
+
+            # 2. Define Future Time (e.g., +2 minutes for next update)
+            future_ts = last_ts + pd.Timedelta(minutes=2)
+
+            # 3. Calculate Volatility for Confidence Interval
+            volatility = df['CurrentPrice'].tail(50).std()
+            if pd.isna(volatility) or volatility == 0:
+                volatility = pred_price * 0.005  # Fallback to 0.5%
+
+            upper_bound = pred_price + volatility
+            lower_bound = pred_price - volatility
+
+            # 4. Draw Confidence Interval (Shaded Box in Future)
+            # We define a polygon: Last_TS -> Future_TS (Top) -> Future_TS -> Last_TS (Bottom)
+            fig.add_trace(go.Scatter(
+                x=[last_ts, future_ts, future_ts, last_ts],
+                y=[upper_bound, upper_bound, lower_bound, lower_bound],
+                fill='toself',
+                fillcolor='rgba(50, 100, 255, 0.15)',
+                line=dict(color='rgba(255,255,255,0)'),
+                hoverinfo="skip",
+                showlegend=False,
+                name="Confidence Interval"
+            ))
+
+            # 5. Prediction Line (Text removed from here)
+            fig.add_trace(go.Scatter(
+                x=[last_ts, future_ts],
+                y=[pred_price, pred_price],
+                mode='lines',  # Text removed, lines only
+                line=dict(color='#3366cc', width=2, dash='dash'),
+                name="Predicted Price",
+                hovertemplate="$%{y:,.2f}<extra></extra>"
+            ))
+
+            # 6. Text Annotation (Added separately for better spacing control)
+            fig.add_annotation(
+                x=last_ts,
+                y=pred_price,
+                text=f"Predicted Price: ${pred_price:,.2f}",
+                showarrow=False,
+                xanchor="left",
+                yanchor="bottom",
+                yshift=10,  # Adds 10px vertical space between line and text
+                xshift=5,
+                font=dict(color="#3366cc", size=12)
+            )
+
+            # 7. Connector Line
+            fig.add_trace(go.Scatter(
+                x=[last_ts, last_ts],
+                y=[last_price, pred_price],
+                mode='lines',
+                line=dict(color='#3366cc', width=1, dash='dot'),
+                hoverinfo='skip',
+                showlegend=False
+            ))
 
     fig.update_layout(
         title=None, xaxis_title=None, yaxis_title="Price ($)",
