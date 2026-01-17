@@ -55,7 +55,7 @@ def server(input, output, session):
         if not is_initialized.get():
             return
 
-        reactive.invalidate_later(120000)
+        reactive.invalidate_later(60)
 
         # WRAP IN TRY-EXCEPT TO PREVENT CRASHING
         with reactive.isolate():
