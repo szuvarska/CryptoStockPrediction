@@ -1,32 +1,22 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
 from pyspark.sql.types import *
-from pyspark.ml.regression import LinearRegressionModel
-from pyspark.ml.feature import VectorAssembler
 from datetime import datetime
 import happybase
+from pyspark.ml.regression import LinearRegressionModel, GBTRegressionModel
+from pyspark.ml.feature import VectorAssembler
 
 spark = (
     SparkSession.builder
-    .appName("CryptoKafkaToHBaseWithPrediction")
+    .appName("CryptoKafkaToHBase")
     .master("spark://spark-master:7077")
     .getOrCreate()
 )
 
 spark.sparkContext.setLogLevel("WARN")
 
-schema = StructType([
-    StructField("symbol", StringType()),
-    StructField("timestamp", LongType()),
-    StructField("NIM", DoubleType()),
-    StructField("SNP", DoubleType()),
-    StructField("DJI", DoubleType()),
-    StructField("SOL", DoubleType()),
-    StructField("ETH", DoubleType()),
-    StructField("current_price", DoubleType())
-])
-
-model = LinearRegressionModel.load("hdfs://namenode:8020/models/btc_model")
+#model = LinearRegressionModel.load("hdfs://namenode:8020/models/btc_model")
+model = GBTRegressionModel.load("hdfs://namenode:8020/models/btc_model_GBTR_2")
 
 feature_cols = ["NIM", "SNP", "DJI", "SOL", "ETH"]
 
@@ -34,6 +24,12 @@ assembler = VectorAssembler(
     inputCols=feature_cols,
     outputCol="features"
 )
+
+schema = StructType([
+    StructField("symbol", StringType()),
+    StructField("current_price", DoubleType()),
+    StructField("timestamp", LongType())
+])
 
 df = (
     spark.readStream
@@ -49,48 +45,67 @@ parsed = (
       .select("j.*")
 )
 
-features_df = assembler.transform(parsed)
-predicted_df = model.transform(features_df)
+# =====================================================
+# FOREACH BATCH
+# =====================================================
 
 def write_to_hbase(batch_df, batch_id):
-    connection = happybase.Connection(host="hbase")
-    table = connection.table("market_prices")
+    connection = happybase.Connection(host='hbase')
+    table = connection.table('prices')
+    latest_prices = {}
 
-    for row in batch_df.toLocalIterator():
-        symbol = row.symbol
+    for row in batch_df.collect():
+        symbol = row.symbol.replace("BINANCE:", "")
         date = datetime.utcfromtimestamp(row.timestamp).strftime("%Y%m%d")
         row_key = f"crypto#{symbol}#{date}"
-
         ts_col = datetime.utcfromtimestamp(row.timestamp).isoformat()
-        prediction = float(row.prediction)
-        price = float(row.current_price) if row.current_price else prediction
+        price = row.current_price
 
-        existing = table.row(row_key)
+        if symbol == 'BTCUSDT':
+            for feature in feature_cols:
+                if feature in ["NIM", "DJI", "SNP"]:
+                    prefix = f"stock#{feature}#"
+                else:
+                    prefix = f"crypto#{feature}USDT#"
 
-        if b"stats:high" in existing:
-            old_high = float(existing[b"stats:high"])
-            old_low = float(existing[b"stats:low"])
-            new_high = max(old_high, price)
-            new_low = min(old_low, price)
-            open_price = existing[b"stats:open"]
+                rows = table.scan(row_prefix=prefix.encode())
+                latest_row_key, latest_row_data = sorted(rows, key=lambda x: x[0], reverse=True)[0]
+                del rows
+                last_col = sorted(latest_row_data.keys())[-1]
+                latest_prices[feature] = float(latest_row_data[last_col])
+                del latest_row_key, latest_row_data, last_col
+
+            if len(latest_prices) == len(feature_cols):
+                new_df = spark.createDataFrame(
+                    [tuple(latest_prices[col] for col in feature_cols)],
+                    feature_cols
+                )
+                new_df = assembler.transform(new_df)
+                pred_df = model.transform(new_df)
+                predicted_btc = float(pred_df.select("prediction").collect()[0][0])
+
+                table.put(
+                    row_key,
+                    {
+                        f'prices:{ts_col}'.encode(): str(price).encode(),
+                        f'predictions:{ts_col}'.encode(): str(predicted_btc).encode(),
+                    }
+                )
         else:
-            new_high = price
-            new_low = price
-            open_price = str(price).encode()
-
-        table.put(row_key, {
-            f"predictions:{ts_col}".encode(): str(prediction).encode(),
-            b"stats:open": open_price,
-            b"stats:high": str(new_high).encode(),
-            b"stats:low": str(new_low).encode(),
-            b"stats:close": str(price).encode(),
-            b"stats:last_prediction": str(prediction).encode()
-        })
+            table.put(
+                row_key,
+                {f'prices:{ts_col}'.encode(): str(price).encode()}
+            )
 
     connection.close()
 
+
+# =====================================================
+# STREAM
+# =====================================================
+
 query = (
-    predicted_df.writeStream
+    parsed.writeStream
     .foreachBatch(write_to_hbase)
     .outputMode("update")
     .start()

@@ -124,6 +124,23 @@ services:
     networks:
       - default
 
+  spark-worker24:
+    image: apache/spark:3.4.1
+    container_name: spark-worker24
+    depends_on:
+      - spark-master
+    command: ["org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8089:8081"
+    entrypoint: ["/opt/spark/bin/spark-class"]
+    networks:
+      - default
+
+
 # Shiny
   shiny-app:
     build:

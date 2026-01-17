@@ -6,7 +6,6 @@ from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.ml.regression import LinearRegressionModel
 from datetime import datetime, timedelta
-from line_profiler import profile
 
 # --- SPARK CONNECTION HELPER ---
 
@@ -47,7 +46,6 @@ def get_hbase_connection(host='hbase'):
         print(f"Error connecting to HBase: {e}")
         return None
 
-@profile
 def load_unified_data():
     conn = get_hbase_connection()
     if not conn: return pd.DataFrame()
