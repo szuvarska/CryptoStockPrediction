@@ -121,3 +121,14 @@ select#source_select {
     margin-top: 3%;
     width: 110%;
 }
+
+/* Alert Text Styles */
+.text-surge {
+    color: var(--status-ok) !important; /* Bootstrap Success Green */
+    font-weight: 700;
+}
+
+.text-crash {
+    color: var(--status-crit) !important; /* Bootstrap Danger Red */
+    font-weight: 700;
+}

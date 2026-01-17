@@ -19,6 +19,23 @@ app_ui = ui.page_sidebar(
                  "ALL": "All Available"},
                 selected="24H"
             ),
+            ui.hr(),
+            ui.h6("Alert Testing"),
+            ui.layout_columns(
+                ui.input_action_button(
+                    "inject_crash",
+                    "Drop -5% ",
+                    class_="btn-danger",
+                    icon=icon_svg("bug")
+                ),
+                ui.input_action_button(
+                    "inject_surge",
+                    "Surge +5%",
+                    class_="btn-success",
+                    icon=icon_svg("arrow-trend-up")
+                ),
+                col_widths=[5, 5]
+            )
         ),
         ui.hr(),
         ui.h6("System Health"),

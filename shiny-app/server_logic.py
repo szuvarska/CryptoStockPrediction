@@ -16,6 +16,7 @@ from plots.eda_plots import (
 from plots.dashboard_plots import plot_price_trend, plot_candlestick
 from plots.eval_plots import plot_actual_vs_predicted, plot_residuals
 from utils import render_plotly_html
+from config import ALL_ASSETS
 
 
 def server(input, output, session):
@@ -28,6 +29,8 @@ def server(input, output, session):
 
     # SAFETY FLAG: Prevents real-time updates from running before history is loaded
     is_initialized = reactive.Value(False)
+
+    last_known_prices = reactive.Value({})
 
     @reactive.Effect
     async def _init_load():
@@ -407,3 +410,88 @@ def server(input, output, session):
     @render.ui
     def spark_model_output():
         return ui.pre(str(load_spark_model('hdfs://namenode:8020/models/btc_model')))
+
+    # REAL-TIME MONITORING (Specific to Chosen Asset)
+    @reactive.Effect
+    def _monitor_selected_asset():
+        # Use the dataframe that is ALREADY filtered by input.crypto_select()
+        df = filtered_crypto_specific()
+
+        if df is None or df.empty:
+            return
+
+        # Get the currently selected symbol
+        current_symbol = input.crypto_select()
+        full_name = ALL_ASSETS.get(current_symbol, current_symbol)
+
+        # Get the very latest price from the filtered data
+        current_price = df['CurrentPrice'].iloc[-1]
+
+        # Retrieve history dict
+        history = last_known_prices.get()
+        last_price = history.get(current_symbol)
+
+        # Check for change if we have a history for THIS symbol
+        if last_price is not None:
+            change_pct = (current_price - last_price) / last_price
+
+            # Threshold: 2%
+            if abs(change_pct) >= 0.02:
+                # Determine Direction and Color
+                if change_pct > 0:
+                    direction = "SURGE 🚀"
+                    # UPDATED: Use CSS class instead of inline style
+                    alert_content = ui.span(
+                        f"{full_name} Alert: {direction} (+{change_pct:.2%})",
+                        class_="text-surge"
+                    )
+                    msg_type = "default"
+                else:
+                    direction = "CRASH 📉"
+                    alert_content = ui.span(
+                        f"{full_name} Alert: {direction} ({change_pct:.2%})",
+                        class_="text-crash"
+                    )
+                    msg_type = "default" # error
+
+                ui.notification_show(
+                    alert_content,
+                    type=msg_type,
+                    duration=None
+                )
+
+        history[current_symbol] = current_price
+        last_known_prices.set(history)
+
+    def inject_price_change(multiplier):
+        store = data_store.get()
+        df = store.get("crypto")
+
+        if df is None or df.empty: return
+
+        symbol = input.crypto_select()
+
+        # Copy and modify last row
+        last_row = df[df['Symbol'] == symbol].iloc[-1].copy()
+        last_row['Datetime'] = pd.Timestamp.now()
+        last_row['CurrentPrice'] = last_row['CurrentPrice'] * multiplier
+
+        new_row_df = pd.DataFrame([last_row])
+        updated_df = pd.concat([df, new_row_df], ignore_index=True)
+
+        print(f"DEBUG: Injecting {multiplier}x price for {symbol}")
+
+        data_store.set({
+            "crypto": updated_df,
+            "forex": store.get("forex")
+        })
+
+    @reactive.Effect
+    @reactive.event(input.inject_crash)
+    def _inject_crash_data():
+        inject_price_change(0.95)  # -5%
+
+    @reactive.Effect
+    @reactive.event(input.inject_surge)
+    def _inject_surge_data():
+        inject_price_change(1.05)  # +5%
