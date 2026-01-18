@@ -265,7 +265,7 @@ def server(input, output, session):
             plot_data(),
             input.crypto_select(),
             input.time_range(),
-            show_sma=True
+            show_sma=input.show_sma()
         ), height="500px")
 
     # --- EDA OUTPUTS ---

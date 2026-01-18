@@ -18,23 +18,6 @@ app_ui = ui.page_sidebar(
                 TIME_RANGE_CHOICES,
                 selected="24H"
             ),
-            # ui.hr(),
-            # ui.h6("Alert Testing"),
-            # ui.layout_columns(
-            #     ui.input_action_button(
-            #         "inject_crash",
-            #         "Drop -5% ",
-            #         class_="btn-danger",
-            #         icon=icon_svg("bug")
-            #     ),
-            #     ui.input_action_button(
-            #         "inject_surge",
-            #         "Surge +5%",
-            #         class_="btn-success",
-            #         icon=icon_svg("arrow-trend-up")
-            #     ),
-            #     col_widths=[5, 5]
-            # )
         ),
         ui.hr(),
         ui.h6("System Health"),
@@ -76,8 +59,17 @@ app_ui = ui.page_sidebar(
                      ),
                      ui.br(),
                      ui.layout_columns(
-                         ui.card(ui.card_header("Candlestick Analysis"), ui.output_ui("candle_chart_view"),
-                                 full_screen=True),
+                         ui.card(
+                             ui.card_header(
+                                 ui.div(
+                                     ui.span("Candlestick Analysis"),
+                                     ui.input_switch("show_sma", "Show SMAs", True),
+                                     class_="d-flex justify-content-between align-items-center"
+                                 )
+                             ),
+                             ui.output_ui("candle_chart_view"),
+                             full_screen=True
+                         ),
                          col_widths=[12]
                      )
                      ),
@@ -143,11 +135,7 @@ app_ui = ui.page_sidebar(
                      ),
                      ui.br(),
                      ui.card(ui.output_table("raw_table"))
-                     # ),
                      ),
-        # ui.nav_panel("Testy Michała",
-        #              ui.output_ui("spark_model_output")
-        #              ),
         id="tabs",
     ),
     ui.output_ui("dynamic_footer"),

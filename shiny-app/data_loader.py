@@ -206,7 +206,7 @@ def load_recent_prices_data():
     now_utc = datetime.utcnow()
     dates_to_fetch = [
         now_utc.strftime("%Y%m%d"),
-        (now_utc - timedelta(days=1)).strftime("%Y%m%d")
+        # (now_utc - timedelta(days=1)).strftime("%Y%m%d")
     ]
 
     keys_list = []
