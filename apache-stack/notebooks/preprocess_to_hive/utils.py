@@ -28,7 +28,7 @@ def find_new_paths(spark, base_path, meta_path):
     all_dirs = list_hdfs_dirs(spark, base_path)
     if last_path:
         new_dirs = [d for d in all_dirs if d > last_path]
-        print(f"Last date: {last_path}")
+        print(f"Last path: {last_path}")
     else:
         new_dirs = all_dirs  # pierwsze uruchomienie
         
@@ -42,4 +42,4 @@ def find_new_paths(spark, base_path, meta_path):
         print("No new data.")
     
     paths_to_read = [base_path + d for d in new_dirs]
-    return paths_to_read
+    return paths_to_read, new_dirs
