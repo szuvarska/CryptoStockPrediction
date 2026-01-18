@@ -6,7 +6,7 @@ app_ui = ui.page_sidebar(
     # --- GLOBAL SIDEBAR ---
     ui.sidebar(
         ui.panel_conditional(
-            "input.tabs != 'Monitoring' && input.tabs != 'Testy Michała'",
+            "input.tabs != 'Monitoring'", # && input.tabs != 'Testy Michała'",
             ui.h4("Filters", class_="sidebar-title"),
             ui.input_select(
                 "crypto_select", "Asset:",
@@ -19,23 +19,23 @@ app_ui = ui.page_sidebar(
                  "ALL": "All Available"},
                 selected="24H"
             ),
-            ui.hr(),
-            ui.h6("Alert Testing"),
-            ui.layout_columns(
-                ui.input_action_button(
-                    "inject_crash",
-                    "Drop -5% ",
-                    class_="btn-danger",
-                    icon=icon_svg("bug")
-                ),
-                ui.input_action_button(
-                    "inject_surge",
-                    "Surge +5%",
-                    class_="btn-success",
-                    icon=icon_svg("arrow-trend-up")
-                ),
-                col_widths=[5, 5]
-            )
+            # ui.hr(),
+            # ui.h6("Alert Testing"),
+            # ui.layout_columns(
+            #     ui.input_action_button(
+            #         "inject_crash",
+            #         "Drop -5% ",
+            #         class_="btn-danger",
+            #         icon=icon_svg("bug")
+            #     ),
+            #     ui.input_action_button(
+            #         "inject_surge",
+            #         "Surge +5%",
+            #         class_="btn-success",
+            #         icon=icon_svg("arrow-trend-up")
+            #     ),
+            #     col_widths=[5, 5]
+            # )
         ),
         ui.hr(),
         ui.h6("System Health"),
@@ -146,9 +146,9 @@ app_ui = ui.page_sidebar(
                      ui.card(ui.output_table("raw_table"))
                      # ),
                      ),
-        ui.nav_panel("Testy Michała",
-                     ui.output_ui("spark_model_output")
-                     ),
+        # ui.nav_panel("Testy Michała",
+        #              ui.output_ui("spark_model_output")
+        #              ),
         id="tabs",
     ),
     ui.output_ui("dynamic_footer"),

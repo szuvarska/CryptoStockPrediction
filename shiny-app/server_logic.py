@@ -80,7 +80,7 @@ def server(input, output, session):
         if not is_initialized.get():
             return
 
-        reactive.invalidate_later(60)
+        reactive.invalidate_later(30)
 
         # WRAP IN TRY-EXCEPT TO PREVENT CRASHING
         with reactive.isolate():
@@ -185,6 +185,58 @@ def server(input, output, session):
         df["Datetime"] = df["Datetime"].dt.strftime('%Y-%m-%d %H:%M')
         return df.sort_values("Datetime", ascending=False)
 
+    def resample_df(df, time_range):
+        """
+        Aggregates dense data into readable candles/points based on the time window.
+        """
+        if df is None or df.empty: return df
+
+        # Define resolution based on range
+        rule_map = {
+            "1H": "1T",  # 1 Minute
+            "24H": "10T",  # 15 Minutes
+            "7D": "1H",  # 1 Hour
+            "30D": "6H",  # 4 Hours
+            "ALL": "1D"  # 1 Day
+        }
+        freq = rule_map.get(time_range, "1H")
+
+        # Prepare for resampling
+        if not isinstance(df.index, pd.DatetimeIndex):
+            dff = df.set_index('Datetime')
+        else:
+            dff = df.copy()
+
+        # Define how to aggregate each column
+        agg_dict = {
+            'CurrentPrice': 'last',  # Close
+            'OpeningPrice': 'first',  # Open
+            'HighestDayPrice': 'max',  # High
+            'LowestDayPrice': 'min',  # Low
+        }
+
+        # Add optional columns only if they exist
+        for col in ['PredictedPrice', 'SMA7', 'SMA30', 'FiftyDayAveragePrice', 'TwoHundredDaysAveragePrice']:
+            if col in dff.columns:
+                agg_dict[col] = 'last'
+
+        # Resample
+        try:
+            res = dff.resample(freq).agg(agg_dict)
+            # Remove empty bins (e.g., weekends for stocks if no data)
+            return res.dropna(subset=['CurrentPrice']).reset_index()
+        except Exception:
+            return df
+
+    @reactive.Calc
+    def plot_data():
+        """
+        Returns the filtered data RESAMPLED for efficient plotting.
+        Use this for Charts, but use 'filtered_crypto_specific' for Metrics/Raw Data.
+        """
+        df = filtered_crypto_specific()
+        return resample_df(df, input.time_range())
+
 
     # --- DASHBOARD OUTPUTS ---
     @render.ui
@@ -225,12 +277,12 @@ def server(input, output, session):
 
     @render.ui
     def price_chart_view():
-        return render_plotly_html(plot_price_trend(filtered_crypto_specific(), input.time_range()), height="400px")
+        return render_plotly_html(plot_price_trend(plot_data(), input.time_range()), height="400px")
 
     @render.ui
     def candle_chart_view():
         return render_plotly_html(plot_candlestick(
-            filtered_crypto_specific(),
+            plot_data(),
             input.crypto_select(),
             input.time_range(),
             show_sma=True
@@ -248,7 +300,7 @@ def server(input, output, session):
 
     @render.ui
     def stock_chart_view():
-        return render_plotly_html(plot_stock_indicators(filtered_crypto_specific()))
+        return render_plotly_html(plot_stock_indicators(filtered_crypto_specific(), input.crypto_select()))
 
     @render.ui
     def forex_chart_view():
@@ -429,7 +481,7 @@ def server(input, output, session):
 
     @render.ui
     def mon_latency():
-        return "60 seconds"
+        return "30 seconds"
 
 
     @render.table
@@ -512,36 +564,36 @@ def server(input, output, session):
 
         history[current_symbol] = current_price
         last_known_prices.set(history)
-
-    def inject_price_change(multiplier):
-        store = data_store.get()
-        df = store.get("crypto")
-
-        if df is None or df.empty: return
-
-        symbol = input.crypto_select()
-
-        # Copy and modify last row
-        last_row = df[df['Symbol'] == symbol].iloc[-1].copy()
-        last_row['Datetime'] = pd.Timestamp.now()
-        last_row['CurrentPrice'] = last_row['CurrentPrice'] * multiplier
-
-        new_row_df = pd.DataFrame([last_row])
-        updated_df = pd.concat([df, new_row_df], ignore_index=True)
-
-        print(f"DEBUG: Injecting {multiplier}x price for {symbol}")
-
-        data_store.set({
-            "crypto": updated_df,
-            "forex": store.get("forex")
-        })
-
-    @reactive.Effect
-    @reactive.event(input.inject_crash)
-    def _inject_crash_data():
-        inject_price_change(0.95)  # -5%
-
-    @reactive.Effect
-    @reactive.event(input.inject_surge)
-    def _inject_surge_data():
-        inject_price_change(1.05)  # +5%
+    #
+    # def inject_price_change(multiplier):
+    #     store = data_store.get()
+    #     df = store.get("crypto")
+    #
+    #     if df is None or df.empty: return
+    #
+    #     symbol = input.crypto_select()
+    #
+    #     # Copy and modify last row
+    #     last_row = df[df['Symbol'] == symbol].iloc[-1].copy()
+    #     last_row['Datetime'] = pd.Timestamp.now()
+    #     last_row['CurrentPrice'] = last_row['CurrentPrice'] * multiplier
+    #
+    #     new_row_df = pd.DataFrame([last_row])
+    #     updated_df = pd.concat([df, new_row_df], ignore_index=True)
+    #
+    #     print(f"DEBUG: Injecting {multiplier}x price for {symbol}")
+    #
+    #     data_store.set({
+    #         "crypto": updated_df,
+    #         "forex": store.get("forex")
+    #     })
+    #
+    # @reactive.Effect
+    # @reactive.event(input.inject_crash)
+    # def _inject_crash_data():
+    #     inject_price_change(0.95)  # -5%
+    #
+    # @reactive.Effect
+    # @reactive.event(input.inject_surge)
+    # def _inject_surge_data():
+    #     inject_price_change(1.05)  # +5%

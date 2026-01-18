@@ -1,6 +1,7 @@
 import plotly.express as px
 import plotly.graph_objects as go
 from plots.helper_plots import  _empty_plot
+from config import STOCK_SYMBOLS
 
 
 def plot_correlation_matrix(df, time_range_label=""):
@@ -69,8 +70,11 @@ def plot_return_distribution(df, symbol, time_range_label=""):
     return fig
 
 
-def plot_stock_indicators(df_stock):
-    if df_stock is None or df_stock.empty: return _empty_plot("S&P 500 Data Unavailable")
+def plot_stock_indicators(df_stock, symbol):
+    if df_stock is None or df_stock.empty: return _empty_plot("Data Unavailable")
+
+    if symbol not in STOCK_SYMBOLS:
+        return _empty_plot(f"Indicators available for Stocks only ({', '.join(STOCK_SYMBOLS)})")
 
     fig = go.Figure()
     # Price Line
@@ -84,7 +88,7 @@ def plot_stock_indicators(df_stock):
                    line=dict(color='red', width=1.5)))
 
     fig.update_layout(
-        title="S&P 500 Market Trends (Golden Cross Check)",
+        title=f"Stock Market Trends ({symbol})",
         template="plotly_white",
         hovermode="x unified",
         margin=dict(l=20, r=20, t=40, b=20),

@@ -4,9 +4,28 @@ import pandas as pd
 from plots.helper_plots import _empty_plot
 
 
+def _ensure_datetime(df):
+    """
+    Helper to ensure 'Datetime' column is datetime objects, not strings.
+    Fixes: TypeError: can only concatenate str (not "Timedelta") to str
+    """
+    if df is None or df.empty: return df
+
+    # If Datetime is not already a datetime type, convert it
+    if not pd.api.types.is_datetime64_any_dtype(df['Datetime']):
+        df = df.copy()
+        df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
+        # Drop rows where conversion failed (NaT)
+        df = df.dropna(subset=['Datetime'])
+
+    return df
+
+
 def plot_price_trend(df, time_range):
     if df is None or df.empty:
         return _empty_plot("Waiting for data...")
+
+    df = _ensure_datetime(df)
 
     # Calculate point-to-point change
     # Shift price by 1 to compare current vs previous
@@ -127,31 +146,33 @@ def plot_candlestick(df, symbol, time_range_label="", show_sma=True):
     if df is None or df.empty:
         return _empty_plot("Not enough data for candlesticks")
 
+    df = _ensure_datetime(df)
+
     plot_df = df.copy()
 
-    if time_range_label in ['1H', '24H']:
-        # Set index for resampling
-        plot_df = plot_df.set_index('Datetime')
-
-        freq_map = {"1H": "1min", "24H": "15min", "7D": "1H", "30D": "4H", "ALL": "1D"}
-        freq = freq_map.get(time_range_label, "4H")
-
-        # Resample OHLC
-        # Open=first, High=max, Low=min, Close=last
-        resampled = plot_df.resample(freq).agg({
-            'CurrentPrice': 'last',  # Close
-            'OpeningPrice': 'first',  # Open
-            'HighestDayPrice': 'max',  # High
-            'LowestDayPrice': 'min',  # Low
-            'SMA7': 'last',  # Indicators (approx)
-            'SMA30': 'last'
-        })
-
-        # Drop empty intervals (no trades)
-        resampled = resampled.dropna(subset=['CurrentPrice'])
-
-        # Reset index to get Datetime column back
-        plot_df = resampled.reset_index()
+    # if time_range_label in ['1H', '24H']:
+    #     # Set index for resampling
+    #     plot_df = plot_df.set_index('Datetime')
+    #
+    #     freq_map = {"1H": "1min", "24H": "10min", "7D": "1H", "30D": "6H", "ALL": "1D"}
+    #     freq = freq_map.get(time_range_label, "4H")
+    #
+    #     # Resample OHLC
+    #     # Open=first, High=max, Low=min, Close=last
+    #     resampled = plot_df.resample(freq).agg({
+    #         'CurrentPrice': 'last',  # Close
+    #         'OpeningPrice': 'first',  # Open
+    #         'HighestDayPrice': 'max',  # High
+    #         'LowestDayPrice': 'min',  # Low
+    #         'SMA7': 'last',  # Indicators (approx)
+    #         'SMA30': 'last'
+    #     })
+    #
+    #     # Drop empty intervals (no trades)
+    #     resampled = resampled.dropna(subset=['CurrentPrice'])
+    #
+    #     # Reset index to get Datetime column back
+    #     plot_df = resampled.reset_index()
 
     # Base: Candlestick
     fig = go.Figure(data=[go.Candlestick(

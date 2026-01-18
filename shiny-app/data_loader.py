@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 import happybase
 import numpy as np
@@ -104,23 +105,47 @@ def fetch_single_symbol_history(symbol, limit, asset_type):
 def load_historical_data(limit=None):
     """
     Loads history using Parallel Threads (IO-bound optimization).
+    Includes RETRY LOGIC to handle 'hconnection closed' errors.
     """
-    # 1. Determine Global Time Boundaries (Single cheap lookup)
-    conn = get_hbase_connection()
-    if not conn: return pd.DataFrame()
+    # Default time boundaries (fallback)
+    t_24h_limit = datetime.now() - timedelta(hours=24)
+    t_7d_limit = datetime.now() - timedelta(days=7)
 
-    try:
-        table = conn.table('crypto_index_aggregates')
-        latest_rows = list(table.scan(limit=5, reverse=True))
-        if not latest_rows: return pd.DataFrame()
+    # 1. Determine Global Time Boundaries (with Retry)
+    max_retries = 3
+    scan_success = False
 
-        max_ts_str = latest_rows[0][0].decode().split('#')[1]
-        max_ts = pd.to_datetime(max_ts_str)
-        t_24h_limit = max_ts - timedelta(hours=24)
-        t_7d_limit = max_ts - timedelta(days=7)
-    finally:
-        conn.close()
+    for attempt in range(max_retries):
+        conn = get_hbase_connection()
+        if not conn:
+            time.sleep(1)
+            continue
 
+        try:
+            table = conn.table('crypto_index_aggregates')
+            latest_rows = list(table.scan(limit=5, reverse=True))
+
+            if latest_rows:
+                max_ts_str = latest_rows[0][0].decode().split('#')[1]
+                max_ts = pd.to_datetime(max_ts_str)
+                t_24h_limit = max_ts - timedelta(hours=24)
+                t_7d_limit = max_ts - timedelta(days=7)
+
+            scan_success = True
+            conn.close()
+            break  # Success
+
+        except Exception as e:
+            print(f"WARN: History boundary scan failed (Attempt {attempt+1}/{max_retries}): {e}")
+            try: conn.close()
+            except: pass
+            time.sleep(2) # Wait before retrying
+
+    if not scan_success:
+        print("ERROR: Could not fetch history boundaries after retries. Aborting history load.")
+        return pd.DataFrame()
+
+    # 2. Parallel Execution
     all_raw_rows = []
 
     # 2. Parallel Execution
