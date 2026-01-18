@@ -1,6 +1,6 @@
 from shiny import ui
 from faicons import icon_svg
-from config import ALL_ASSETS
+from config import ALL_ASSETS, TIME_RANGE_CHOICES
 
 app_ui = ui.page_sidebar(
     # --- GLOBAL SIDEBAR ---
@@ -15,8 +15,7 @@ app_ui = ui.page_sidebar(
             ),
             ui.input_select(
                 "time_range", "Time Range:",
-                {"1H": "Last 1 Hour", "24H": "Last 24 Hours", "7D": "Last 7 Days", "30D": "Last 30 Days",
-                 "ALL": "All Available"},
+                TIME_RANGE_CHOICES,
                 selected="24H"
             ),
             # ui.hr(),

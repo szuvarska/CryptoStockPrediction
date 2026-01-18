@@ -2,7 +2,7 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 from plots.helper_plots import _empty_plot
-
+from config import TIME_RANGE_CONFIG
 
 def _ensure_datetime(df):
     """
@@ -65,13 +65,9 @@ def plot_price_trend(df, time_range):
             last_price = df['CurrentPrice'].iloc[-1]
             last_ts = df['Datetime'].max()
 
-            # 2. Define Future Time (e.g., +2 minutes for next update)
-            time_to_add = {"1H": pd.Timedelta(minutes=10),
-                           "24H": pd.Timedelta(hours=6),
-                           "7D": pd.Timedelta(days=1),
-                           "30D": pd.Timedelta(days=7),
-                           "ALL": pd.Timedelta(days=7)}
-            buffer = time_to_add.get(time_range, pd.Timedelta(hours=1))
+            # 2. Define Future Time (Fetch from Config)
+            # Default to 1 hour if not found
+            buffer = TIME_RANGE_CONFIG.get(time_range, {}).get("lookahead", pd.Timedelta(hours=1))
             future_ts = last_ts + buffer
 
             # 3. Calculate Volatility for Confidence Interval
@@ -142,37 +138,15 @@ def plot_price_trend(df, time_range):
     return fig
 
 
-def plot_candlestick(df, symbol, time_range_label="", show_sma=True):
+def plot_candlestick(df, symbol, time_range_key="", show_sma=True):
     if df is None or df.empty:
         return _empty_plot("Not enough data for candlesticks")
 
     df = _ensure_datetime(df)
 
-    plot_df = df.copy()
+    tr_label = TIME_RANGE_CONFIG.get(time_range_key, {}).get("label", time_range_key)
 
-    # if time_range_label in ['1H', '24H']:
-    #     # Set index for resampling
-    #     plot_df = plot_df.set_index('Datetime')
-    #
-    #     freq_map = {"1H": "1min", "24H": "10min", "7D": "1H", "30D": "6H", "ALL": "1D"}
-    #     freq = freq_map.get(time_range_label, "4H")
-    #
-    #     # Resample OHLC
-    #     # Open=first, High=max, Low=min, Close=last
-    #     resampled = plot_df.resample(freq).agg({
-    #         'CurrentPrice': 'last',  # Close
-    #         'OpeningPrice': 'first',  # Open
-    #         'HighestDayPrice': 'max',  # High
-    #         'LowestDayPrice': 'min',  # Low
-    #         'SMA7': 'last',  # Indicators (approx)
-    #         'SMA30': 'last'
-    #     })
-    #
-    #     # Drop empty intervals (no trades)
-    #     resampled = resampled.dropna(subset=['CurrentPrice'])
-    #
-    #     # Reset index to get Datetime column back
-    #     plot_df = resampled.reset_index()
+    plot_df = df.copy()
 
     # Base: Candlestick
     fig = go.Figure(data=[go.Candlestick(
@@ -200,7 +174,7 @@ def plot_candlestick(df, symbol, time_range_label="", show_sma=True):
 
     # Layout
     fig.update_layout(
-        title=dict(text=f"{time_range_label} Price Action", x=0.01),
+        title=dict(text=f"{tr_label} Price Action", x=0.01),
         yaxis_title="Price ($)",
         margin=dict(l=60, r=20, t=40, b=40),  # Increased bottom margin for rangeslider
         hovermode="x unified",

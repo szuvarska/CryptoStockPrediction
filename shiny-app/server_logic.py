@@ -17,7 +17,7 @@ from plots.eda_plots import (
 from plots.dashboard_plots import plot_price_trend, plot_candlestick
 from plots.eval_plots import plot_actual_vs_predicted, plot_residuals
 from utils import render_plotly_html
-from config import ALL_ASSETS
+from config import ALL_ASSETS, TIME_RANGE_CONFIG
 
 
 def server(input, output, session):
@@ -121,18 +121,13 @@ def server(input, output, session):
 
     # --- HELPER: GENERIC TIME FILTER ---
     def filter_by_time(df, time_range, date_col='Datetime'):
-        """Filters any dataframe by the selected time range."""
+        """Filters any dataframe by the selected time range using config."""
         if df is None or df.empty: return df
 
-        cutoff_map = {
-            "1H": pd.Timedelta(hours=1),
-            "24H": pd.Timedelta(hours=24),
-            "7D": pd.Timedelta(days=7),
-            "30D": pd.Timedelta(days=30)
-        }
+        config = TIME_RANGE_CONFIG.get(time_range)
 
-        if time_range in cutoff_map:
-            cutoff_time = df[date_col].max() - cutoff_map[time_range]
+        if config and config.get("offset"):
+            cutoff_time = df[date_col].max() - config["offset"]
             return df[df[date_col] >= cutoff_time].copy()
 
         return df
@@ -187,19 +182,12 @@ def server(input, output, session):
 
     def resample_df(df, time_range):
         """
-        Aggregates dense data into readable candles/points based on the time window.
+        Aggregates dense data into readable candles/points based on the time window config.
         """
         if df is None or df.empty: return df
 
-        # Define resolution based on range
-        rule_map = {
-            "1H": "1T",  # 1 Minute
-            "24H": "10T",  # 15 Minutes
-            "7D": "1H",  # 1 Hour
-            "30D": "6H",  # 4 Hours
-            "ALL": "1D"  # 1 Day
-        }
-        freq = rule_map.get(time_range, "1H")
+        # Get frequency from config, default to 1H if unknown
+        freq = TIME_RANGE_CONFIG.get(time_range, {}).get("freq", "1H")
 
         # Prepare for resampling
         if not isinstance(df.index, pd.DatetimeIndex):
@@ -223,7 +211,7 @@ def server(input, output, session):
         # Resample
         try:
             res = dff.resample(freq).agg(agg_dict)
-            # Remove empty bins (e.g., weekends for stocks if no data)
+            # Remove empty bins
             return res.dropna(subset=['CurrentPrice']).reset_index()
         except Exception:
             return df
@@ -247,15 +235,7 @@ def server(input, output, session):
 
     @render.ui
     def vbox_change_label():
-        range_labels = {
-            "1H": "Change (1h)",
-            "24H": "Change (24h)",
-            "7D": "Change (7d)",
-            "30D": "Change (30d)",
-            "ALL": "Change (All Time)"
-        }
-        # Default to "Change" if something unexpected happens
-        return range_labels.get(input.time_range(), "Change")
+        return TIME_RANGE_CONFIG.get(input.time_range(), {}).get("change_label", "Change")
 
     @render.ui
     def vbox_change():
