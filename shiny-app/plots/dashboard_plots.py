@@ -4,7 +4,7 @@ import pandas as pd
 from plots.helper_plots import _empty_plot
 
 
-def plot_price_trend(df):
+def plot_price_trend(df, time_range):
     if df is None or df.empty:
         return _empty_plot("Waiting for data...")
 
@@ -47,7 +47,13 @@ def plot_price_trend(df):
             last_ts = df['Datetime'].max()
 
             # 2. Define Future Time (e.g., +2 minutes for next update)
-            future_ts = last_ts + pd.Timedelta(minutes=2)
+            time_to_add = {"1H": pd.Timedelta(minutes=10),
+                           "24H": pd.Timedelta(hours=6),
+                           "7D": pd.Timedelta(days=1),
+                           "30D": pd.Timedelta(days=7),
+                           "ALL": pd.Timedelta(days=7)}
+            buffer = time_to_add.get(time_range, pd.Timedelta(hours=1))
+            future_ts = last_ts + buffer
 
             # 3. Calculate Volatility for Confidence Interval
             volatility = df['CurrentPrice'].tail(50).std()
@@ -75,7 +81,7 @@ def plot_price_trend(df):
                 x=[last_ts, future_ts],
                 y=[pred_price, pred_price],
                 mode='lines',  # Text removed, lines only
-                line=dict(color='#3366cc', width=2, dash='dash'),
+                line=dict(color='#3366cc', width=3, dash='dash'),
                 name="Predicted Price",
                 hovertemplate="$%{y:,.2f}<extra></extra>"
             ))
@@ -121,28 +127,54 @@ def plot_candlestick(df, symbol, time_range_label="", show_sma=True):
     if df is None or df.empty:
         return _empty_plot("Not enough data for candlesticks")
 
+    plot_df = df.copy()
+
+    if time_range_label in ['1H', '24H']:
+        # Set index for resampling
+        plot_df = plot_df.set_index('Datetime')
+
+        freq_map = {"1H": "1min", "24H": "15min", "7D": "1H", "30D": "4H", "ALL": "1D"}
+        freq = freq_map.get(time_range_label, "4H")
+
+        # Resample OHLC
+        # Open=first, High=max, Low=min, Close=last
+        resampled = plot_df.resample(freq).agg({
+            'CurrentPrice': 'last',  # Close
+            'OpeningPrice': 'first',  # Open
+            'HighestDayPrice': 'max',  # High
+            'LowestDayPrice': 'min',  # Low
+            'SMA7': 'last',  # Indicators (approx)
+            'SMA30': 'last'
+        })
+
+        # Drop empty intervals (no trades)
+        resampled = resampled.dropna(subset=['CurrentPrice'])
+
+        # Reset index to get Datetime column back
+        plot_df = resampled.reset_index()
+
     # Base: Candlestick
     fig = go.Figure(data=[go.Candlestick(
-        x=df['Datetime'],
-        open=df['OpeningPrice'],
-        high=df['HighestDayPrice'],
-        low=df['LowestDayPrice'],
-        close=df['CurrentPrice'],
+        x=plot_df['Datetime'],
+        open=plot_df['OpeningPrice'],
+        high=plot_df['HighestDayPrice'],
+        low=plot_df['LowestDayPrice'],
+        close=plot_df['CurrentPrice'],
         name=symbol,
         text=[
             f"Opening Price: {o:,.2f}<br>Highest Day Price: {h:,.2f}<br>Lowest Day Price: {l:,.2f}<br>Current Price: {c:,.2f}"
             for o, h, l, c in
-            zip(df['OpeningPrice'], df['HighestDayPrice'], df['LowestDayPrice'], df['CurrentPrice'])],
+            zip(plot_df['OpeningPrice'], plot_df['HighestDayPrice'], plot_df['LowestDayPrice'], plot_df['CurrentPrice'])],
         hoverinfo="x+text"
     )])
 
     # Only add SMAs if requested AND they exist in the dataframe
     if show_sma:
-        if 'SMA7' in df.columns:
-            fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA7'], mode='lines', name=f'SMA 7',
+        if 'SMA7' in plot_df.columns:
+            fig.add_trace(go.Scatter(x=plot_df['Datetime'], y=plot_df['SMA7'], mode='lines', name=f'SMA 7',
                                      line=dict(color='purple', width=1.5)))
-        if 'SMA30' in df.columns:
-            fig.add_trace(go.Scatter(x=df['Datetime'], y=df['SMA30'], mode='lines', name=f'SMA 30',
+        if 'SMA30' in plot_df.columns:
+            fig.add_trace(go.Scatter(x=plot_df['Datetime'], y=plot_df['SMA30'], mode='lines', name=f'SMA 30',
                                      line=dict(color='blue', width=1.5)))
 
     # Layout

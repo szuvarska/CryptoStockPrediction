@@ -66,7 +66,7 @@ def server(input, output, session):
 
         # Update store and set flag
         data_store.set({
-            "crypto": history_df,
+            "crypto": full_crypto,
             "forex": forex_df
         })
         is_initialized.set(True)
@@ -106,9 +106,9 @@ def server(input, output, session):
 
                     updated_df = updated_df.drop_duplicates(subset=['Symbol', 'Datetime'], keep='last')
 
-                    updated_df['FiftyDayAveragePrice'] = updated_df.groupby('Symbol')['FiftyDayAveragePrice'].ffill()
-                    updated_df['TwoHundredDaysAveragePrice'] = updated_df.groupby('Symbol')[
-                        'TwoHundredDaysAveragePrice'].ffill()
+                    for col in ['FiftyDayAveragePrice', 'TwoHundredDaysAveragePrice', 'SMA7', 'SMA30']:
+                        if col in updated_df.columns:
+                            updated_df[col] = updated_df.groupby('Symbol')[col].ffill().bfill()
 
                     data_store.set({
                         "crypto": updated_df,
@@ -225,7 +225,7 @@ def server(input, output, session):
 
     @render.ui
     def price_chart_view():
-        return render_plotly_html(plot_price_trend(filtered_crypto_specific()), height="400px")
+        return render_plotly_html(plot_price_trend(filtered_crypto_specific(), input.time_range()), height="400px")
 
     @render.ui
     def candle_chart_view():
@@ -486,7 +486,7 @@ def server(input, output, session):
             change_pct = (current_price - last_price) / last_price
 
             # Threshold: 0.2%
-            if abs(change_pct) >= 0.0004:
+            if abs(change_pct) >= 0.0003:
                 # Determine Direction and Color
                 if change_pct > 0:
                     direction = "SURGE 🚀"
