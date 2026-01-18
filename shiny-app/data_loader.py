@@ -168,38 +168,44 @@ def load_historical_data(limit=None):
 
 def load_recent_prices_data():
     """
-    Loads raw tick data (prices & predictions) for Today and Yesterday.
-    This provides high-resolution data for the 'Last 24H' view on startup
-    without scanning the entire history.
+    Loads raw tick data (prices & predictions) for Today ONLY.
+    Includes DEBUG prints to trace execution.
     """
+
     conn = get_hbase_connection()
-    if not conn: return pd.DataFrame()
+    if not conn:
+        return pd.DataFrame()
 
     table = conn.table('prices')
 
-    # 1. Generate Keys for Today
-    today = datetime.now().strftime("%Y%m%d")
+    now_utc = datetime.utcnow()
+    dates_to_fetch = [
+        now_utc.strftime("%Y%m%d"),
+        (now_utc - timedelta(days=1)).strftime("%Y%m%d")
+    ]
 
     keys_list = []
     meta_map = {}  # key -> (symbol, asset_type)
 
-    for symbol in ALL_SYMBOLS:
-        # Determine strict HBase row key format
-        if symbol in CRYPTO_SYMBOLS:
-            h_type = 'crypto'
-            h_symbol = f"{symbol}USDT"
-            out_type = 'Crypto'
-        else:
-            h_type = 'stock'
-            h_symbol = symbol
-            out_type = 'Stock'
+    for date_str in dates_to_fetch:
+        for symbol in ALL_SYMBOLS:
+            if symbol in CRYPTO_SYMBOLS:
+                h_type = 'crypto'
+                h_symbol = f"{symbol}USDT"
+                out_type = 'Crypto'
+            else:
+                h_type = 'stock'
+                h_symbol = symbol
+                out_type = 'Stock'
 
-        row_key = f"{h_type}#{h_symbol}#{today}".encode()
-        keys_list.append(row_key)
-        meta_map[row_key] = (symbol, out_type)
+            # Fetch only Today
+            row_key = f"{h_type}#{h_symbol}#{date_str}".encode()
+            keys_list.append(row_key)
+            meta_map[row_key] = (symbol, out_type)
 
-    # 2. Batch Fetch (Very Fast)
+    # 2. Batch Fetch
     found_rows = table.rows(keys_list)
+
     rows_data = []
 
     # 3. Parse Data
@@ -207,43 +213,33 @@ def load_recent_prices_data():
         if key not in meta_map: continue
         symbol, asset_type = meta_map[key]
 
-        # Group columns by timestamp to align Price and Prediction
-        # Structure: {'2025-01-17T12:00:00': {'price': X, 'pred': Y}}
         grouped_ticks = {}
 
+        # OPTIMIZATION 1: Work with bytes where possible or delay complex parsing
         for col_bytes, val_bytes in data.items():
+            # Decode only once
             col_str = col_bytes.decode()
-            try:
-                if col_str.startswith('prices:'):
-                    ts_part = col_str.split(':', 1)[1]
-                    if ts_part not in grouped_ticks: grouped_ticks[ts_part] = {}
-                    grouped_ticks[ts_part]['price'] = float(val_bytes)
 
-                elif col_str.startswith('predictions:'):
-                    ts_part = col_str.split(':', 1)[1]
-                    if ts_part not in grouped_ticks: grouped_ticks[ts_part] = {}
-                    grouped_ticks[ts_part]['pred'] = float(val_bytes)
-            except:
-                continue
+            if col_str.startswith('prices:'):
+                ts_str = col_str[7:]  # fast slice, no split needed
+                if ts_str not in grouped_ticks: grouped_ticks[ts_str] = {}
+                grouped_ticks[ts_str]['price'] = float(val_bytes)
+
+            elif col_str.startswith('predictions:'):
+                ts_str = col_str[12:]  # fast slice
+                if ts_str not in grouped_ticks: grouped_ticks[ts_str] = {}
+                grouped_ticks[ts_str]['pred'] = float(val_bytes)
 
         # Convert groups to rows
         for ts_str, vals in grouped_ticks.items():
             if 'price' not in vals: continue
 
-            try:
-                ts = pd.to_datetime(ts_str)
-                # Correction: Ensure timestamp is timezone-naive for compatibility
-                if ts.tz is not None: ts = ts.tz_localize(None)
-            except:
-                continue
-
             rows_data.append({
-                'Datetime': ts,
+                'Datetime': ts_str,
                 'Symbol': symbol,
                 'Type': asset_type,
                 'CurrentPrice': vals['price'],
                 'PredictedPrice': vals.get('pred', np.nan),
-                # Fill OHLC approx for raw ticks
                 'OpeningPrice': vals['price'],
                 'HighestDayPrice': vals['price'],
                 'LowestDayPrice': vals['price'],
@@ -256,9 +252,16 @@ def load_recent_prices_data():
 
     conn.close()
 
-    if not rows_data: return pd.DataFrame()
+    if not rows_data:
+        return pd.DataFrame()
 
     df = pd.DataFrame(rows_data)
+
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+
+    if df['Datetime'].dt.tz is not None:
+        df['Datetime'] = df['Datetime'].dt.tz_localize(None)
+
     df = df.sort_values(['Symbol', 'Datetime'])
     return df
 
