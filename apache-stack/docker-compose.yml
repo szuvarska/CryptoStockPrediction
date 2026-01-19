@@ -169,6 +169,7 @@ services:
     environment:
       - HBASE_MANAGES_ZK=false
       - HBASE_ZOOKEEPER_QUORUM=zookeeper
+      - HBASE_HEAPSIZE=2g
     ports:  
       - "16010:16010"  # HBase Master Web UI
       - "16000:16000"  # Master port

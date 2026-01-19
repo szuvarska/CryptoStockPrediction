@@ -11,7 +11,7 @@ from datetime import datetime
 
 spark = (
     SparkSession.builder 
-    .appName("preprocess_batch") 
+    .appName("Batch Preprocess") 
     .master("spark://spark-master:7077") 
     .config("spark.cores.max", "1")
     .config("spark.executor.cores", "1")
