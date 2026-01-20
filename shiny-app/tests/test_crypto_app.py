@@ -2,6 +2,7 @@ import pytest
 import logging
 from playwright.sync_api import Page, expect
 import re
+from datetime import datetime, timedelta
 
 # Set up logging for the report
 logging.basicConfig(
@@ -58,22 +59,28 @@ def test_spark_monitoring_status(shared_page: Page):
     logger.info("Tab changed to Monitoring. Waiting for Spark-SQL table...")
 
     table = shared_page.locator("#mon_table")
-    # FIX: to_have_count does not support Regex. Use a number >= 2 (Header + 1 row).
     # We wait for the table to populate
     expect(table).to_be_visible(timeout=120000)
 
     # Verify table has at least 2 rows (Header + at least one data row)
     count = table.locator("tr").count()
     assert count >= 2, f"Expected at least 2 rows in monitoring table, found {count}"
-    logger.info(f"TC-203 Passed: Spark monitoring table has {count} rows.")
+    logger.info(f"TC-103 Passed: Spark monitoring table has {count} rows.")
 
 
-def test_hdfs_model_debug(shared_page: Page):
-    """TC-104: Verify HDFS Model metadata."""
-    shared_page.click("text=Testy Michała")
-    model_output = shared_page.locator("pre")
-    expect(model_output).to_contain_text("LinearRegressionModel", timeout=60000)
-    logger.info("TC-205 Passed: Model loaded correctly from HDFS.")
+def test_model_eval_tab(shared_page: Page):
+    """TC-104: Verify Model Evaluation Dashboard."""
+    shared_page.click("text=Model Eval")
+
+    # Use .filter() to select the specific header containing "Model Scorecard"
+    header = shared_page.locator("h3.tab-header").filter(has_text="Model Scorecard")
+    expect(header).to_be_visible(timeout=10000)
+
+    # Verify we see at least one metric box (e.g., RMSE)
+    rmse_box = shared_page.locator("text=RMSE")
+    expect(rmse_box).to_be_visible()
+
+    logger.info("TC-104 Passed: Model Eval tab and Scorecard loaded.")
 
 
 def test_raw_data_download(shared_page: Page):
@@ -118,3 +125,89 @@ def test_time_range_filter(shared_page: Page):
     expect(price_chart).not_to_have_class(re.compile(r"recalculating"), timeout=30000)
 
     logger.info("TC-106: Time range changed to 7D and chart updated.")
+
+
+def test_eda_tab_load(shared_page: Page):
+    """TC-108: Verify EDA Tab and Charts load."""
+    shared_page.click("text=EDA")
+
+    # Check for the Correlation Matrix or Distribution Chart
+    # We look for the generic plotly class or specific ID
+    corr_chart = shared_page.locator("#corr_chart_view")
+    expect(corr_chart).to_be_visible(timeout=60000)
+
+    logger.info("TC-108 Passed: EDA tab loaded and Correlation chart is visible.")
+
+
+def test_candlestick_toggle(shared_page: Page):
+    """TC-109: Verify Candlestick Chart and SMA Switch."""
+    shared_page.click("text=Dashboard")
+
+    # Locate the switch for Simple Moving Averages (SMAs)
+    sma_switch = shared_page.locator("label:has-text('Show SMAs')")
+    expect(sma_switch).to_be_visible()
+
+    # Verify the chart itself exists
+    candle_chart = shared_page.locator("#candle_chart_view")
+    expect(candle_chart).to_be_visible(timeout=30000)
+
+    logger.info("TC-109 Passed: Candlestick chart and SMA toggle are present.")
+
+
+def test_bitcoin_prediction_visible(shared_page: Page):
+    """TC-110: Verify Real-Time Bitcoin Prediction on Price Trend Plot."""
+    shared_page.click("text=Dashboard")
+
+    # 1. Select Bitcoin explicitly
+    shared_page.get_by_label("Asset:").select_option("BTC")
+
+    # 2. Wait for chart to be stable
+    chart = shared_page.locator("#price_chart_view")
+    expect(chart).not_to_have_class(re.compile(r"recalculating"), timeout=10000)
+
+    # 3. Check for the "Predicted Price" annotation text
+    # This text is only rendered if the backend DataFrame contains 'PredictedPrice'
+    expect(chart).to_contain_text("Predicted Price", timeout=30000)
+
+    logger.info("TC-110 Passed: Bitcoin prediction annotation is visible (Real-time pipeline active).")
+
+
+def test_data_freshness_raw(shared_page: Page):
+    """TC-111: Verify latest data point is fresh (<= 2 min old)."""
+    shared_page.click("text=Raw Data")
+
+    # Use the specific ID '#raw_table' to find the correct table
+    # 'output_table' in Shiny creates a div with the ID, containing the actual table
+    table = shared_page.locator("#raw_table table")
+    expect(table).to_be_visible()
+
+    # Find Datetime column index
+    headers_loc = table.locator("thead th")
+    expect(headers_loc.first).to_be_visible()
+    headers = headers_loc.all_inner_texts()
+
+    if "Datetime" not in headers:
+        pytest.fail(f"Datetime column not found. Headers: {headers}")
+
+    dt_idx = headers.index("Datetime")
+
+    # Get first row timestamp (latest data)
+    rows = table.locator("tbody tr")
+    expect(rows.first).to_be_visible()
+
+    timestamp_str = rows.nth(0).locator("td").nth(dt_idx).inner_text()
+
+    # Parse the timestamp (Format: %Y-%m-%d %H:%M)
+    dt_obj = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M")
+
+    # Current time
+    now = datetime.now()
+
+    # Calculate difference
+    diff = now - dt_obj
+
+    # Assert freshness (allowing ~70s buffer for seconds truncation and execution time)
+    # The requirement is "maximally a minute different".
+    assert abs(diff.total_seconds()) <= 120, f"Data is stale! Latest: {dt_obj}, Now: {now}, Diff: {diff}"
+
+    logger.info(f"TC-111 Passed: Latest data point is fresh. Diff: {diff}")

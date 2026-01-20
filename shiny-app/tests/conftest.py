@@ -32,4 +32,4 @@ def pytest_runtest_makereport(item, call):
                 # 3. Add to report
                 extra.append(pytest_html.extras.image(image_b64, mime_type="image/png"))
 
-        report.extra = extra
+        report.extras = extra
