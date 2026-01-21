@@ -84,7 +84,7 @@ Contents include:
 
 - **Batch → HBase:** `Batch_to_HBase/` - aggregation notebooks and helper scripts (`agg_crypto_to_HBase.py`, `agg_stock_to_HBase.py`) that produce batch views stored in HBase for fast lookups.
 
-- **Stream preprocessing:** Lightweight scripts at the repo root and under `notebooks/` used by streaming jobs to prepare records for HBase ingestion (e.g., `crypto_to_hbase.py`, `stock_to_hbase.py`).
+- **Stream preprocessing:** scripts used by streaming jobs to prepare records for HBase ingestion (`crypto_to_hbase.py`, `stock_to_hbase.py`).
 
 - **Batch jobs / Scheduling:** `batch_jobs/` - shell jobs and crontab examples (`crypto_job.sh`, `stock_job.sh`, `crontab_config.txt`) for running periodic batch tasks.
 
