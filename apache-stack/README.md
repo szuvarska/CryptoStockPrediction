@@ -80,16 +80,17 @@ The `notebooks/` directory is mounted into the `spark-jupyter` container at:
 
 Contents include:
 
-* **ETL to Hive**
-  * `preprocess_to_hive/*.ipynb` - creation of Hive tables, preprocessing for all data sources and ingesting them to Hive
-* **Batch views to Hbase**
-  * `agg_x_to_HBase.ipynb`
-* **Stream Preprocessing Scripts**
-  * `x_to_hbase.py`
-* **EDA**
-  * `EDA.ipynb`
-* **Machine Learning**
-  * `Test_ml.ipynb`
+- **ETL → Hive:** `preprocess_to_hive/` - notebooks and `*.py` scripts that create Hive tables, clean and transform source data, and write to the Hive warehouse (e.g., `crypto_to_hive.py`, `stock_to_hive.py`, `forex_to_hive.py`, `utils.py`).
+
+- **Batch → HBase:** `Batch_to_HBase/` - aggregation notebooks and helper scripts (`agg_crypto_to_HBase.py`, `agg_stock_to_HBase.py`) that produce batch views stored in HBase for fast lookups.
+
+- **Stream preprocessing:** Lightweight scripts at the repo root and under `notebooks/` used by streaming jobs to prepare records for HBase ingestion (e.g., `crypto_to_hbase.py`, `stock_to_hbase.py`).
+
+- **Batch jobs / Scheduling:** `batch_jobs/` - shell jobs and crontab examples (`crypto_job.sh`, `stock_job.sh`, `crontab_config.txt`) for running periodic batch tasks.
+
+- **EDA & Analysis:** `EDA.ipynb`, `EDA_nulls.ipynb` - are helper notebooks for problem exploration and plotting.
+
+- **ML experiments:** `Test_ml.ipynb` and `retrain.ipynb` contain model training, evaluation, and retraining examples.
 
 ---
 
