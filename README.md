@@ -1,5 +1,7 @@
 # Predicting Cryptocurrency Prices Based on Stock Behaviour
 
+🔗[Showcase](#showcase)
+
 ## 1. Project Overview
 
 This project aims to develop a system that enables traders and investors to track and analyse
@@ -51,3 +53,11 @@ buy or sell specific assets.
 
 For detailed provisioning instructions, read [apache-stack/README.md](apache-stack/README.md).
 For application details, read [shiny-app/README.md](shiny-app/README.md).
+
+## Showcase
+
+https://github.com/user-attachments/assets/e3d0958b-de8d-4907-858e-e3efa2571c4f
+
+<img width="1151" height="621" alt="Architecture Diagram" src="https://github.com/user-attachments/assets/da662424-df5c-4b03-a43f-b157fa6e9954" />
+
+
